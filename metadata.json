@@ -1,0 +1,6 @@
+{
+  "name": "SITDOWORLD AI MUSIC",
+  "description": "AI Music Studio for Creators - Transforme tes idées en véritables chansons avec l'intelligence artificielle.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
