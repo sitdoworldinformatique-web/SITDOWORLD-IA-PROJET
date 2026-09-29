@@ -104,27 +104,38 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right Section: Balance, Notifs, Profile, +Créer */}
         <div className="flex items-center gap-3">
-          {/* Song Balance Badge */}
-          <button
-            onClick={() => navigate('/pricing')}
-            title="Cliquez pour voir les packs ou recharger vos crédits de chansons"
-            id="header-balance-badge"
-            className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 border transition-all cursor-pointer ${
-              availableSongs === 0
-                ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
-                : availableSongs === 1
-                ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-                : 'bg-[#EFF6FF] text-[#2563EB] border-blue-200 hover:bg-blue-100'
-            }`}
-          >
-            <span className="w-2 h-2 rounded-full bg-[#FF7A00] animate-pulse"></span>
-            <span>
-              {availableSongs} {availableSongs > 1 ? 'chansons' : 'chanson'} restante{availableSongs > 1 ? 's' : ''}
-            </span>
-            {availableSongs <= 1 && (
-              <AlertCircle className="w-3.5 h-3.5 text-[#FF7A00]" />
-            )}
-          </button>
+          {/* Song Balance Badge or Welcome Bonus */}
+          {user ? (
+            <button
+              onClick={() => navigate('/pricing')}
+              title="Cliquez pour voir les packs ou recharger vos crédits de chansons"
+              id="header-balance-badge"
+              className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 border transition-all cursor-pointer ${
+                availableSongs === 0
+                  ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
+                  : availableSongs === 1
+                  ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                  : 'bg-[#EFF6FF] text-[#2563EB] border-blue-200 hover:bg-blue-100'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-[#FF7A00] animate-pulse"></span>
+              <span>
+                {availableSongs} {availableSongs > 1 ? 'chansons' : 'chanson'} restante{availableSongs > 1 ? 's' : ''}
+              </span>
+              {availableSongs <= 1 && (
+                <AlertCircle className="w-3.5 h-3.5 text-[#FF7A00]" />
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={() => navigate('/auth')}
+              className="px-3 py-1.5 rounded-full text-xs font-extrabold flex items-center gap-1.5 bg-orange-50 text-[#FF7A00] border border-orange-200 hover:bg-orange-100 transition-colors cursor-pointer"
+              title="Créer un compte pour recevoir 2 chansons gratuites"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>2 Chansons Offertes</span>
+            </button>
+          )}
 
           {/* Notifications */}
           <div className="relative">
@@ -146,7 +157,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <div className="space-y-2 text-xs">
                   <div className="p-2 bg-[#EFF6FF] rounded-lg text-slate-700">
                     <p className="font-semibold text-[#0F172A]">🎉 Bienvenue sur SITDOWORLD AI MUSIC</p>
-                    <p className="text-slate-500 mt-0.5">Votre compte dispose de 8 chansons prêtes pour vos créations studio.</p>
+                    <p className="text-slate-500 mt-0.5">Votre studio IA musical pour créer des morceaux complets.</p>
                   </div>
                   <div className="p-2 hover:bg-slate-50 rounded-lg text-slate-700">
                     <p className="font-semibold text-[#0F172A]">⚡ Studio Multitrack disponible</p>
@@ -157,23 +168,24 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </div>
 
-          {/* User Profile */}
-          <div className="relative">
-            <button
-              onClick={() => setProfileOpen(!profileOpen)}
-              className="flex items-center gap-2 p-1.5 pl-2 pr-3 rounded-full hover:bg-slate-100 border border-slate-200 transition-colors"
-              id="header-profile-btn"
-            >
-              <img
-                src={user?.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80'}
-                alt="Avatar"
-                className="w-7 h-7 rounded-full object-cover border border-orange-400"
-              />
-              <span className="hidden md:inline text-xs font-bold text-[#0F172A] max-w-[100px] truncate">
-                {user?.name || 'Créateur'}
-              </span>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
-            </button>
+          {/* User Profile or Login CTA */}
+          {user ? (
+            <div className="relative">
+              <button
+                onClick={() => setProfileOpen(!profileOpen)}
+                className="flex items-center gap-2 p-1.5 pl-2 pr-3 rounded-full hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer"
+                id="header-profile-btn"
+              >
+                <img
+                  src={user.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80'}
+                  alt="Avatar"
+                  className="w-7 h-7 rounded-full object-cover border border-orange-400"
+                />
+                <span className="hidden md:inline text-xs font-bold text-[#0F172A] max-w-[100px] truncate">
+                  {user.name}
+                </span>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+              </button>
 
             {profileOpen && (
               <div className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95">
@@ -231,6 +243,16 @@ export const Header: React.FC<HeaderProps> = ({
               </div>
             )}
           </div>
+        ) : (
+          <button
+            onClick={() => navigate('/auth')}
+            className="px-3.5 py-2 rounded-xl bg-[#2563EB] hover:bg-blue-700 text-white font-bold text-xs shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            id="header-login-btn"
+          >
+            <UserIcon className="w-3.5 h-3.5" />
+            <span>Connexion / Inscription</span>
+          </button>
+        )}
 
           {/* Primary Action Button: + CRÉER (Orange #FF7A00 as strictly required) */}
           <button

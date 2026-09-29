@@ -9,8 +9,9 @@ import {
   Music,
   CheckCircle2,
   Users,
+  ShieldCheck,
 } from 'lucide-react';
-import { Song, Playlist, Genre } from '../types';
+import { Song, Playlist, Genre, Plan } from '../types';
 import { SongCard } from '../components/SongCard';
 
 interface HomeViewProps {
@@ -22,6 +23,8 @@ interface HomeViewProps {
   onPlaySong: (song: Song) => void;
   onSelectGenre: (genre: string) => void;
   onOpenStudio: (song: Song) => void;
+  plans?: Plan[];
+  onSelectPlan?: (plan: Plan) => void;
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({
@@ -33,6 +36,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onPlaySong,
   onSelectGenre,
   onOpenStudio,
+  plans = [],
+  onSelectPlan,
 }) => {
   const genres: { name: Genre; desc: string; color: string; icon: string }[] = [
     { name: 'Afrobeat', desc: 'Burna, Wizkid & Rema vibes', color: 'from-amber-500 to-orange-600', icon: '🥁' },
@@ -288,6 +293,134 @@ export const HomeView: React.FC<HomeViewProps> = ({
             >
               Sitdoworld Voice
             </button>
+          </div>
+        </div>
+      </section>
+
+      {/* 6. SECTION TARIFS & PACKS DE CHANSONS (Visibilité Complète sous la Page d'Accueil) */}
+      <section className="pt-8 border-t border-slate-200/90 space-y-8" id="tarifs-accueil">
+        <div className="text-center max-w-3xl mx-auto space-y-3">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-100 text-[#FF7A00] text-xs font-black shadow-xs">
+            <Sparkles className="w-4 h-4" />
+            <span>GRILLE TARIFAIRE OFFICIELLE • PAIEMENT MOBILE MONEY DIRECT</span>
+          </div>
+          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black text-[#0F172A] tracking-tight">
+            Tarifs simples et transparents. <span className="text-[#FF7A00]">Pas d'abonnement forcé</span>.
+          </h2>
+          <p className="text-sm sm:text-base text-[#64748B] leading-relaxed">
+            Achetez uniquement les chansons dont vous avez besoin. Vos crédits n'expirent jamais. Règlement instantané par <strong>Mobile Money</strong> (Orange Money, MTN MoMo, Wave, Vodacom M-Pesa, Airtel) ou Carte bancaire via SASPAY.ME.
+          </p>
+        </div>
+
+        {/* Plans Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5">
+          {(plans && plans.length > 0 ? plans : [
+            { id: 'starter', name: 'Pack Découverte', songs: 5, price: 2.45, currency: 'USD', popular: false, active: true },
+            { id: 'creator', name: 'Pack Créateur', songs: 10, price: 4.90, currency: 'USD', popular: true, active: true },
+            { id: 'pro', name: 'Pack Studio Pro', songs: 25, price: 9.80, currency: 'USD', popular: false, active: true },
+            { id: 'master', name: 'Pack Élite Label', songs: 60, price: 19.50, currency: 'USD', popular: false, active: true },
+            { id: 'mega', name: 'Pack Ultra Hit', songs: 150, price: 39.00, currency: 'USD', popular: false, active: true },
+          ] as Plan[]).map((plan) => {
+            const isPopular = plan.popular;
+            return (
+              <div
+                key={plan.id}
+                className={`relative rounded-3xl p-6 transition-all duration-300 flex flex-col justify-between h-full ${
+                  isPopular
+                    ? 'bg-white border-2 border-[#FF7A00] shadow-xl shadow-orange-500/10 scale-102 z-10'
+                    : 'bg-white border border-slate-200/90 hover:border-blue-300 hover:shadow-lg'
+                }`}
+              >
+                {/* Popular Badge */}
+                {isPopular && (
+                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full bg-[#FF7A00] text-white text-[11px] font-black uppercase tracking-wider flex items-center gap-1 shadow-sm whitespace-nowrap">
+                    <Flame className="w-3 h-3 fill-current" />
+                    <span>LE PLUS POPULAIRE</span>
+                  </div>
+                )}
+
+                <div>
+                  <div className="mb-4">
+                    <span className="text-xs font-black uppercase text-[#2563EB] tracking-wider block">
+                      {plan.name}
+                    </span>
+                    <h3 className="text-xl font-black text-[#0F172A] mt-1">{plan.name}</h3>
+                  </div>
+
+                  {/* Price */}
+                  <div className="mb-5 pb-5 border-b border-slate-100">
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-3xl font-black text-[#0F172A]">${plan.price.toFixed(2)}</span>
+                      <span className="text-xs font-semibold text-[#64748B]">USD unique</span>
+                    </div>
+                    <p className="text-xs font-bold text-[#FF7A00] mt-1">
+                      {plan.songs} chansons complètes master
+                    </p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Soit ${(plan.price / plan.songs).toFixed(2)} / chanson
+                    </p>
+                  </div>
+
+                  {/* Features */}
+                  <div className="space-y-2 mb-6 text-xs text-slate-700">
+                    <div className="flex items-center gap-2 font-bold text-emerald-700">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Crédits valables à vie sans expiration</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-[#2563EB] shrink-0" />
+                      <span>1 chanson master par génération</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-[#2563EB] shrink-0" />
+                      <span>Export audio haute fidélité</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-[#2563EB] shrink-0" />
+                      <span>Accès Studio multitrack & stems</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-[#2563EB] shrink-0" />
+                      <span>Droits commerciaux inclus</span>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => (onSelectPlan ? onSelectPlan(plan) : navigate('/pricing'))}
+                  className={`w-full py-3.5 rounded-2xl font-black text-xs tracking-wide transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer active:scale-98 ${
+                    isPopular
+                      ? 'bg-[#FF7A00] hover:bg-[#e66e00] text-white shadow-orange-500/25'
+                      : 'bg-[#2563EB] hover:bg-blue-700 text-white shadow-blue-500/20'
+                  }`}
+                  id={`home-plan-btn-${plan.id}`}
+                >
+                  <span>Acheter {plan.songs} chansons</span>
+                  <ArrowRight className="w-4 h-4 shrink-0" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Mobile Money Operators Trust Banner */}
+        <div className="bg-slate-50 rounded-3xl p-6 border border-slate-200 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="font-extrabold text-sm text-[#0F172A]">
+                Paiement Sécurisé Mobile Money & Cartes via SASPAY.ME
+              </h4>
+              <p className="text-xs text-slate-500">
+                Orange Money, MTN Mobile Money, Wave, Vodacom M-Pesa, Airtel Money, Moov, Visa, Mastercard.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-xs font-bold text-[#2563EB]">
+            <span>Validation directe par code PIN sur votre mobile</span>
           </div>
         </div>
       </section>

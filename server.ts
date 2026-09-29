@@ -714,17 +714,42 @@ async function startServer() {
 
   // ---------------- AUTH ROUTES ----------------
   app.get('/api/auth/me', (req, res) => {
-    const defaultUser = db.users.get('user-default-1');
-    if (!defaultUser) return res.status(404).json({ error: 'User not found' });
-    const balance = db.getBalance(defaultUser.id);
-    res.json({ user: defaultUser, balance });
+    const userId = (req.query.userId as string) || (req.headers['x-user-id'] as string);
+    if (userId && db.users.has(userId)) {
+      const user = db.users.get(userId)!;
+      const balance = db.getBalance(user.id);
+      return res.json({ user, balance });
+    }
+    // Check if autoDefault is requested (e.g. for legacy tests)
+    if (req.query.autoDefault === 'true') {
+      const defaultUser = db.users.get('user-default-1') || Array.from(db.users.values())[0];
+      if (defaultUser) {
+        return res.json({ user: defaultUser, balance: db.getBalance(defaultUser.id) });
+      }
+    }
+    res.json({ user: null, balance: null });
   });
 
   app.post('/api/auth/login', (req, res) => {
     const { email } = req.body;
     let user = Array.from(db.users.values()).find((u) => u.email.toLowerCase() === (email || '').toLowerCase());
     if (!user) {
-      user = db.users.get('user-default-1')!;
+      if (email && email.includes('@')) {
+        const nameFromEmail = email.split('@')[0];
+        user = {
+          id: `user-${Date.now()}`,
+          email,
+          name: nameFromEmail.charAt(0).toUpperCase() + nameFromEmail.slice(1),
+          username: nameFromEmail,
+          avatar_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80',
+          bio: 'Créateur SITDOWORLD AI MUSIC',
+          role: 'creator' as const,
+          created_at: new Date().toISOString(),
+        };
+        db.users.set(user.id, user);
+      } else {
+        user = db.users.get('user-default-1')!;
+      }
     }
     const balance = db.getBalance(user.id);
     res.json({ user, balance });

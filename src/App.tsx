@@ -3,6 +3,7 @@ import { Header } from './components/Header';
 import { GlobalAudioPlayer } from './components/GlobalAudioPlayer';
 import { AuthModal } from './components/AuthModal';
 
+import { AuthView } from './views/AuthView';
 import { HomeView } from './views/HomeView';
 import { DiscoverView } from './views/DiscoverView';
 import { CreateView } from './views/CreateView';
@@ -19,8 +20,14 @@ import { AdminView } from './views/AdminView';
 import { User, UserSongBalance, Song, Playlist, Plan, PromptTemplate, VoiceProfile } from './types';
 
 export function App() {
-  // Navigation
-  const [currentRoute, setCurrentRoute] = useState<string>('/');
+  // Navigation: unauthenticated visitors arrive on the registration/login page first
+  const [currentRoute, setCurrentRoute] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const isLoggedIn = localStorage.getItem('sitdoworld_logged_in') === 'true';
+      return isLoggedIn ? '/' : '/auth';
+    }
+    return '/auth';
+  });
 
   // Global State
   const [user, setUser] = useState<User | null>(null);
@@ -47,10 +54,17 @@ export function App() {
   // Initial Data Fetch
   const refreshUserData = async () => {
     try {
-      const res = await fetch('/api/auth/me');
+      const storedUserId = typeof window !== 'undefined' ? localStorage.getItem('sitdoworld_user_id') : null;
+      const url = storedUserId ? `/api/auth/me?userId=${encodeURIComponent(storedUserId)}` : '/api/auth/me';
+      const res = await fetch(url);
       const data = await res.json();
-      if (data.user) setUser(data.user);
-      if (data.balance) setBalance(data.balance);
+      if (data.user) {
+        setUser(data.user);
+        if (data.balance) setBalance(data.balance);
+      } else {
+        setUser(null);
+        setBalance(null);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -180,12 +194,28 @@ export function App() {
         balance={balance}
         onOpenAuth={() => setAuthModalOpen(true)}
         onLogout={() => {
-          refreshUserData();
+          localStorage.removeItem('sitdoworld_logged_in');
+          localStorage.removeItem('sitdoworld_user_id');
+          setUser(null);
+          setBalance(null);
+          setCurrentRoute('/auth');
         }}
       />
 
       {/* Main Container View */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+        {/* Registration or Login Page (Gateway before Home View) */}
+        {currentRoute === '/auth' && (
+          <AuthView
+            onAuthSuccess={(u, b) => {
+              setUser(u);
+              setBalance(b);
+              setCurrentRoute('/');
+            }}
+            onExploreAsGuest={() => setCurrentRoute('/')}
+          />
+        )}
+
         {currentRoute === '/' && (
           <HomeView
             navigate={(r) => setCurrentRoute(r)}
@@ -196,6 +226,8 @@ export function App() {
             onPlaySong={handlePlaySong}
             onSelectGenre={handleSelectGenre}
             onOpenStudio={handleOpenStudio}
+            plans={plans}
+            onSelectPlan={handleSelectPlan}
           />
         )}
 
@@ -324,8 +356,13 @@ export function App() {
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
         onLoginSuccess={(u, b) => {
+          localStorage.setItem('sitdoworld_logged_in', 'true');
+          localStorage.setItem('sitdoworld_user_id', u.id);
           setUser(u);
           setBalance(b);
+          if (currentRoute === '/auth') {
+            setCurrentRoute('/');
+          }
         }}
       />
     </div>
