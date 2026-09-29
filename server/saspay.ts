@@ -2,6 +2,27 @@ import crypto from 'crypto';
 import { db } from './db';
 import { Payment, PaymentStatus, PlanId } from '../src/types';
 import { SASPAY_SECRET_KEY, SASPAY_API_KEY, SASPAY_WEBHOOK_SECRET } from './secrets';
+import { saspayConfigManager } from './saspayConfig';
+import {
+  saspayFetch,
+  logSaspayRequest,
+  getRecentSaspayOutgoingLogs,
+  clearSaspayOutgoingLogs,
+  redactSensitiveData,
+  redactHeaders,
+  redactString,
+} from './saspayLogger';
+
+export {
+  saspayConfigManager,
+  saspayFetch,
+  logSaspayRequest,
+  getRecentSaspayOutgoingLogs,
+  clearSaspayOutgoingLogs,
+  redactSensitiveData,
+  redactHeaders,
+  redactString,
+};
 
 export interface SaspayInitiateRequest {
   planId: PlanId;
@@ -19,6 +40,7 @@ export interface SaspayInitiateResponse {
   transaction_reference: string;
   merchant_reference: string;
   provider_transaction_id?: string;
+  session_type?: 'softpay' | 'checkout_session';
   checkout_url?: string;
   checkoutUrl: string;
   amount: number;
@@ -30,6 +52,22 @@ export interface SaspayInitiateResponse {
   instructions?: string[];
   network?: string;
   country?: string;
+  requires_redirect?: boolean;
+  payment?: Payment;
+  timings?: {
+    t0_request_received: string;
+    t1_provider_dispatched: string;
+    t2_provider_responded: string;
+    backend_prep_ms: number;
+    provider_latency_ms: number;
+    total_latency_ms: number;
+  };
+  latency_breakdown?: {
+    client_to_backend: string;
+    backend_internal: string;
+    saspay_api: string;
+    telecom_operator: string;
+  };
 }
 
 export interface SaspayWebhookPayload {
@@ -54,26 +92,57 @@ export interface ResolvedRouting {
   country: string;
   network: string;
   currency: string;
+  preferredChannel: 'softpay' | 'checkout_session';
+}
+
+export function maskPhoneNumber(phone?: string): string {
+  if (!phone) return 'N/A';
+  const clean = phone.replace(/[\s\-\(\)]/g, '');
+  if (clean.length <= 6) return clean;
+  const prefix = clean.slice(0, 4);
+  const suffix = clean.slice(-3);
+  return `${prefix}*******${suffix}`;
 }
 
 export class SaspayService {
-  private apiKey: string;
-  private secretKey: string;
-  private webhookSecret: string;
-  private baseUrl: string;
   private activePollers: Map<string, NodeJS.Timeout> = new Map();
+  private recentRequestsByPhone: Map<string, number> = new Map();
 
-  constructor() {
-    this.secretKey = SASPAY_SECRET_KEY;
-    this.apiKey = SASPAY_API_KEY || SASPAY_SECRET_KEY;
-    this.webhookSecret =
-      process.env.SASPAY_WEBHOOK_SECRET ||
-      SASPAY_WEBHOOK_SECRET ||
-      'ce1cbaf1598a05c29cb316f2058b3ab793e8626ec44899e733868ff5a0649847';
-    this.baseUrl = process.env.SASPAY_BASE_URL || 'https://api.saspay.me/api/v1';
+  public get secretKey(): string {
+    const cfg = saspayConfigManager.getConfig();
+    return cfg.secretKey || cfg.apiKey || process.env.SASPAY_SECRET_KEY || SASPAY_SECRET_KEY || '';
   }
 
-  // Normalize phone number and resolve carrier routing according to SasPay specifications
+  public get apiKey(): string {
+    const cfg = saspayConfigManager.getConfig();
+    return cfg.apiKey || cfg.secretKey || process.env.SASPAY_API_KEY || SASPAY_API_KEY || '';
+  }
+
+  public get merchantId(): string {
+    const cfg = saspayConfigManager.getConfig();
+    return cfg.merchantId || process.env.SASPAY_MERCHANT_ID || '';
+  }
+
+  public get webhookSecret(): string {
+    const cfg = saspayConfigManager.getConfig();
+    return cfg.webhookSecret || process.env.SASPAY_WEBHOOK_SECRET || SASPAY_WEBHOOK_SECRET || '';
+  }
+
+  public get baseUrl(): string {
+    const cfg = saspayConfigManager.getConfig();
+    return (cfg.baseUrl || process.env.SASPAY_BASE_URL || 'https://api.saspay.me/api/v1').replace(/\/+$/, '');
+  }
+
+  public isConfigured(): boolean {
+    const cfg = saspayConfigManager.getConfig();
+    return cfg.isActive && Boolean(this.secretKey || this.apiKey);
+  }
+
+  /**
+   * Robust phone number normalization and carrier routing resolution (Step 3).
+   * Strips spaces, symbols, international '00', redundant leading zeros,
+   * and adapts to national telecom numbering plans (Bénin 10-digits, CI 10-digits, RDC 9-digits, etc.).
+   */
   public resolveRouting(rawPhone?: string, method?: string): ResolvedRouting {
     let clean = (rawPhone || '').replace(/[\s\-\(\)\.]/g, '');
     if (clean.startsWith('00')) {
@@ -89,77 +158,164 @@ export class SaspayService {
         country: 'XX',
         network: 'card',
         currency: 'USD',
+        preferredChannel: 'checkout_session',
       };
     }
 
     // 2. Democratic Republic of Congo (+243)
-    if (clean.startsWith('+243') || clean.startsWith('243') || m === 'vodacom_mpesa' || m.includes('vodacom') || m.includes('mpesa')) {
-      if (!clean.startsWith('+')) {
-        if (clean.startsWith('243')) clean = '+' + clean;
-        else clean = '+243' + clean.replace(/^0+/, '');
-      }
+    if (
+      clean.startsWith('+243') ||
+      clean.startsWith('243') ||
+      m === 'vodacom_mpesa' ||
+      m.includes('vodacom') ||
+      m.includes('mpesa') ||
+      m.includes('airtel_cd') ||
+      m.includes('orange_cd') ||
+      m.includes('afrimoney_cd')
+    ) {
+      let digits = clean.replace(/^\+?243/, '').replace(/^0+/, '');
+      const cleanPhone = '+243' + digits;
       let network = 'vodacom_cd';
       if (m.includes('airtel')) network = 'airtel_cd';
       else if (m.includes('orange')) network = 'orange_cd';
       else if (m.includes('afrimoney')) network = 'afrimoney_cd';
-      return { cleanPhone: clean, country: 'CD', network, currency: 'USD' };
+
+      // Attempt softpay direct push first. If SasPay returns no_route_available,
+      // it falls back automatically to checkout-sessions for guaranteed gateway authorization.
+      return {
+        cleanPhone,
+        country: 'CD',
+        network,
+        currency: 'USD',
+        preferredChannel: 'softpay',
+      };
     }
 
-    // 3. Cameroon (+237)
-    if (clean.startsWith('+237') || clean.startsWith('237')) {
-      if (!clean.startsWith('+')) clean = '+' + clean;
-      const network = m.includes('orange') ? 'orange_cm' : 'mtn_cm';
-      return { cleanPhone: clean, country: 'CM', network, currency: 'USD' };
-    }
-
-    // 4. Benin (+229)
-    if (clean.startsWith('+229') || clean.startsWith('229')) {
-      if (!clean.startsWith('+')) clean = '+' + clean;
+    // 3. Benin (+229) - 10 digits plan: adds 01 prefix if 8 local digits received
+    if (clean.startsWith('+229') || clean.startsWith('229') || m.includes('bj')) {
+      let digits = clean.replace(/^\+?229/, '');
+      if (digits.length === 8) {
+        digits = '01' + digits;
+      } else if (digits.length === 9 && digits.startsWith('1')) {
+        digits = '0' + digits;
+      }
+      const cleanPhone = '+229' + digits;
       let network = 'mtn_bj';
       if (m.includes('moov')) network = 'moov_bj';
       else if (m.includes('celtiis')) network = 'celtiis_bj';
-      return { cleanPhone: clean, country: 'BJ', network, currency: 'USD' };
+      return {
+        cleanPhone,
+        country: 'BJ',
+        network,
+        currency: 'XOF',
+        preferredChannel: 'softpay',
+      };
     }
 
-    // 5. Senegal (+221)
-    if (clean.startsWith('+221') || clean.startsWith('221')) {
-      if (!clean.startsWith('+')) clean = '+' + clean;
+    // 4. Cameroon (+237) - 9 digits
+    if (clean.startsWith('+237') || clean.startsWith('237') || m.includes('cm')) {
+      let digits = clean.replace(/^\+?237/, '').replace(/^0+/, '');
+      const cleanPhone = '+237' + digits;
+      const network = m.includes('orange') ? 'orange_cm' : 'mtn_cm';
+      return {
+        cleanPhone,
+        country: 'CM',
+        network,
+        currency: 'XAF',
+        preferredChannel: 'softpay',
+      };
+    }
+
+    // 5. Senegal (+221) - 9 digits
+    if (clean.startsWith('+221') || clean.startsWith('221') || m.includes('sn')) {
+      let digits = clean.replace(/^\+?221/, '').replace(/^0+/, '');
+      const cleanPhone = '+221' + digits;
       let network = 'orange_sn';
       if (m.includes('wave')) network = 'wave_sn';
       else if (m.includes('free')) network = 'freemoney_sn';
-      return { cleanPhone: clean, country: 'SN', network, currency: 'USD' };
+      return {
+        cleanPhone,
+        country: 'SN',
+        network,
+        currency: 'XOF',
+        preferredChannel: 'softpay',
+      };
     }
 
-    // 6. Burkina Faso (+226)
-    if (clean.startsWith('+226') || clean.startsWith('226')) {
-      if (!clean.startsWith('+')) clean = '+' + clean;
+    // 6. Burkina Faso (+226) - 8 digits
+    if (clean.startsWith('+226') || clean.startsWith('226') || m.includes('bf')) {
+      let digits = clean.replace(/^\+?226/, '').replace(/^0+/, '');
+      const cleanPhone = '+226' + digits;
       const network = m.includes('moov') ? 'moov_bf' : 'orange_bf';
-      return { cleanPhone: clean, country: 'BF', network, currency: 'USD' };
+      return {
+        cleanPhone,
+        country: 'BF',
+        network,
+        currency: 'XOF',
+        preferredChannel: 'softpay',
+      };
     }
 
-    // 7. Togo (+228)
-    if (clean.startsWith('+228') || clean.startsWith('228')) {
-      if (!clean.startsWith('+')) clean = '+' + clean;
+    // 7. Togo (+228) - 8 digits
+    if (clean.startsWith('+228') || clean.startsWith('228') || m.includes('tg')) {
+      let digits = clean.replace(/^\+?228/, '').replace(/^0+/, '');
+      const cleanPhone = '+228' + digits;
       const network = m.includes('moov') ? 'moov_tg' : 'togocel';
-      return { cleanPhone: clean, country: 'TG', network, currency: 'USD' };
+      return {
+        cleanPhone,
+        country: 'TG',
+        network,
+        currency: 'XOF',
+        preferredChannel: 'softpay',
+      };
     }
 
-    // 8. Default Côte d'Ivoire (+225)
-    if (!clean.startsWith('+')) {
-      if (clean.startsWith('225')) {
-        clean = '+' + clean;
+    // 8. Congo Brazzaville (+242)
+    if (clean.startsWith('+242') || clean.startsWith('242') || m.includes('cg')) {
+      let digits = clean.replace(/^\+?242/, '').replace(/^0+/, '');
+      const cleanPhone = '+242' + digits;
+      const network = m.includes('airtel') ? 'airtel_cg' : 'mtn_cg';
+      return {
+        cleanPhone,
+        country: 'CG',
+        network,
+        currency: 'XAF',
+        preferredChannel: 'softpay',
+      };
+    }
+
+    // 9. Default Côte d'Ivoire (+225) - 10 digits plan: must start with 01, 05, or 07
+    let digits = clean.replace(/^\+?225/, '');
+    if (digits.length === 10 && digits.startsWith('0')) {
+      // Already 10 digits with leading zero (e.g. 0501234567, 0712345678, 0101234567)
+      // Keep exactly as is!
+    } else if (digits.length === 9 && /^[157]/.test(digits)) {
+      // 9 digits missing the leading 0: add it back
+      digits = '0' + digits;
+    } else if (digits.length === 8 && /^[01457]/.test(digits)) {
+      // Legacy 8-digit numbering: determine prefix based on operator
+      if (m.includes('mtn')) {
+        digits = '05' + digits;
+      } else if (m.includes('moov')) {
+        digits = '01' + digits;
       } else {
-        clean = '+225' + clean.replace(/^0+/, '');
+        digits = '07' + digits;
       }
     }
-
+    const cleanPhone = '+225' + (digits || '0700000000');
     let network = 'orange_ci';
     if (m === 'mtn_momo' || m.includes('mtn')) network = 'mtn_ci';
     else if (m === 'wave' || m.includes('wave')) network = 'wave_ci';
     else if (m.includes('moov')) network = 'moov_ci';
     else if (m.includes('djamo')) network = 'djamo_ci';
 
-    return { cleanPhone: clean, country: 'CI', network, currency: 'USD' };
+    return {
+      cleanPhone,
+      country: 'CI',
+      network,
+      currency: 'USD',
+      preferredChannel: 'softpay',
+    };
   }
 
   public normalizePhoneNumber(raw?: string): string {
@@ -173,7 +329,7 @@ export class SaspayService {
     return `SAS-${planId.toUpperCase()}-${timestamp}-${random}`;
   }
 
-  // Compute HMAC SHA256 signature for internal verification
+  // Compute HMAC SHA256 signature for internal simulation/verification
   public computeSignature(
     reference: string,
     amount: number,
@@ -245,8 +401,9 @@ export class SaspayService {
     return false;
   }
 
-  // Strict state machine (Step 5)
-  // CREATED -> PENDING -> PROCESSING -> CONFIRMED (PAID/SUCCESS)
+
+  // Strict state machine (Step 5 & 15)
+  // CREATED -> INITIATING -> PAYMENT_REQUEST_SENT -> PENDING_CUSTOMER_CONFIRMATION / CHECKOUT_REQUIRED -> PROCESSING -> CONFIRMED
   // Terminal failure states: FAILED, CANCELLED, EXPIRED
   public isValidStateTransition(currentStatus: PaymentStatus, targetStatus: PaymentStatus): boolean {
     const current = String(currentStatus || '').toUpperCase();
@@ -260,17 +417,54 @@ export class SaspayService {
       return false;
     }
 
-    // From CREATED
-    if (current === 'CREATED') {
-      return ['PENDING', 'PROCESSING', 'CONFIRMED', 'PAID', 'SUCCESS', 'FAILED', 'CANCELLED', 'EXPIRED'].includes(target);
+    if (current === 'CREATED' || current === 'INITIATING') {
+      return [
+        'INITIATING',
+        'PAYMENT_REQUEST_SENT',
+        'PENDING_CUSTOMER_CONFIRMATION',
+        'CHECKOUT_REQUIRED',
+        'PENDING',
+        'PROCESSING',
+        'CONFIRMED',
+        'PAID',
+        'SUCCESS',
+        'FAILED',
+        'CANCELLED',
+        'EXPIRED',
+      ].includes(target);
     }
 
-    // From PENDING
-    if (current === 'PENDING') {
-      return ['PROCESSING', 'CONFIRMED', 'PAID', 'SUCCESS', 'FAILED', 'CANCELLED', 'EXPIRED'].includes(target);
+    if (current === 'PAYMENT_REQUEST_SENT') {
+      return [
+        'PENDING_CUSTOMER_CONFIRMATION',
+        'CHECKOUT_REQUIRED',
+        'PENDING',
+        'PROCESSING',
+        'CONFIRMED',
+        'PAID',
+        'SUCCESS',
+        'FAILED',
+        'CANCELLED',
+        'EXPIRED',
+      ].includes(target);
     }
 
-    // From PROCESSING
+    if (
+      current === 'PENDING_CUSTOMER_CONFIRMATION' ||
+      current === 'CHECKOUT_REQUIRED' ||
+      current === 'PENDING'
+    ) {
+      return [
+        'PROCESSING',
+        'CONFIRMED',
+        'PAID',
+        'SUCCESS',
+        'FAILED',
+        'CANCELLED',
+        'EXPIRED',
+      ].includes(target);
+    }
+
     if (current === 'PROCESSING') {
       return ['CONFIRMED', 'PAID', 'SUCCESS', 'FAILED', 'CANCELLED', 'EXPIRED'].includes(target);
     }
@@ -278,52 +472,54 @@ export class SaspayService {
     return true;
   }
 
-  // Initiate real SasPay payment
+  /**
+   * Initiate real SasPay payment (Step 2 & 4).
+   * Strategy:
+   * 1. If preferred channel is softpay, try direct push (POST /payments/softpay/).
+   * 2. If softpay fails with 422 (e.g. no_route_available, unrouted network, or prepayment_otp_missing),
+   *    or if preferred channel is checkout_session, immediately route through POST /checkout-sessions/.
+   * 3. This guarantees that ANY mobile money network (Vodacom RDC, Orange, MTN, Wave, etc.)
+   *    reaches a working gateway with the exact prompt or validation URL.
+   */
   public async createTransaction(params: SaspayInitiateRequest): Promise<SaspayInitiateResponse> {
+    const t0 = Date.now();
+    const t0Iso = new Date(t0).toISOString();
+
     const plan = db.plans.find((p) => p.id === params.planId && p.active);
     if (!plan) {
       throw new Error(`Plan introuvable ou inactif: ${params.planId}`);
     }
 
-    const routing = this.resolveRouting(params.customerPhone, params.paymentMethod);
-    const maskedPhone = routing.cleanPhone.slice(0, 4) + '••••' + routing.cleanPhone.slice(-2);
-
-    console.log(`[PAYMENT_INIT_STARTED] plan=${plan.id} price=${plan.price}USD phone=${maskedPhone} country=${routing.country} network=${routing.network}`);
-
-    // Double payment prevention: reuse if pending in the last 2 minutes
-    const twoMinutesAgo = Date.now() - 2 * 60 * 1000;
-    for (const existing of db.payments.values()) {
-      if (
-        existing.user_id === params.userId &&
-        existing.plan_id === plan.id &&
-        (existing.status === 'PENDING' || existing.status === 'PROCESSING') &&
-        new Date(existing.created_at).getTime() > twoMinutesAgo
-      ) {
-        console.log(`[PAYMENT] Reusing active pending payment: ${existing.merchant_reference}`);
-        return {
-          success: true,
-          transactionReference: existing.merchant_reference,
-          transaction_reference: existing.merchant_reference,
-          merchant_reference: existing.merchant_reference,
-          provider_transaction_id: existing.provider_transaction_id,
-          checkout_url: existing.checkout_url,
-          checkoutUrl: existing.checkout_url || `/payment/checkout?ref=${existing.merchant_reference}`,
-          amount: existing.amount,
-          currency: existing.currency,
-          songs: existing.songs_quantity,
-          planName: plan.name,
-          status: existing.status,
-          instructions: existing.instructions,
-          network: existing.network,
-          country: existing.country,
-          message: 'Paiement déjà en attente. Vérifiez votre téléphone Mobile Money pour confirmer.',
-        };
-      }
+    const cfg = saspayConfigManager.getConfig();
+    if (!cfg.isActive) {
+      throw new Error(
+        "La passerelle de paiement Mobile Money SASPAY.ME est actuellement désactivée. Veuillez l'activer dans le panneau d'administration (onglet Configuration SASPAY.ME)."
+      );
     }
+
+    if (!this.secretKey && !this.apiKey) {
+      throw new Error(
+        "La passerelle SASPAY.ME n'est pas configurée. Saisissez votre Clé API et Clé Secrète dans l'interface d'administration (onglet Configuration SASPAY.ME)."
+      );
+    }
+
+    const routing = this.resolveRouting(params.customerPhone, params.paymentMethod);
+    const maskedPhone = maskPhoneNumber(routing.cleanPhone);
+
+    // Anti-flood rate limiting: protect telecom operator SMS/USSD gates (allow 1 push every 3 seconds per number)
+    const cleanPhone = routing.cleanPhone;
+    const lastRequestTime = this.recentRequestsByPhone.get(cleanPhone) || 0;
+    if (t0 - lastRequestTime < 3000) {
+      const waitSec = Math.ceil((3000 - (t0 - lastRequestTime)) / 1000);
+      throw new Error(
+        `Veuillez patienter ${waitSec}s avant de demander un nouvel envoi de confirmation pour ce numéro.`
+      );
+    }
+    this.recentRequestsByPhone.set(cleanPhone, t0);
 
     const reference = this.generateReference(plan.id);
 
-    // Initial local payment record in CREATED/PENDING state (NO CREDITS GIVEN)
+    // Initial local payment record in INITIATING state (instant in-memory save < 1ms)
     const payment: Payment = {
       id: `pay-${Date.now()}`,
       user_id: params.userId,
@@ -334,7 +530,7 @@ export class SaspayService {
       transaction_reference: reference,
       amount: plan.price,
       currency: plan.currency,
-      status: 'PENDING',
+      status: 'INITIATING',
       phone_number: routing.cleanPhone,
       customer_phone: routing.cleanPhone,
       payment_method: params.paymentMethod || routing.network,
@@ -345,144 +541,292 @@ export class SaspayService {
       pack_credited: false,
       webhook_received: false,
       webhook_verified: false,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: t0Iso,
+      updated_at: t0Iso,
     };
-
     db.savePayment(payment);
 
-    console.log(`[PAYMENT_REQUEST_SENT_TO_SASPAY] POST ${this.baseUrl}/payments/softpay/`);
+    let providerInitiated = false;
+    let finalStatus: PaymentStatus = 'PENDING_CUSTOMER_CONFIRMATION';
+    let providerId: string | undefined = undefined;
+    let checkoutUrl = '';
+    let instructions: string[] = [];
+    let isDirectPush = true;
+    let sessionType: 'softpay' | 'checkout_session' = 'softpay';
 
-    const idempotencyKey = `idem-${reference}-${Date.now()}`;
-    const payload = {
-      amount: String(plan.price),
-      currency: plan.currency, // 'USD' (SasPay automatically converts to local currency)
-      country: routing.country,
-      description: `SITDOWORLD IA Music - Pack ${plan.name} (${plan.songs} chansons)`,
-      customer: {
-        email: params.customerEmail || 'sitdoworldinformatique@gmail.com',
-        first_name: 'Client',
-        last_name: 'SITDOWORLD',
-        phone: routing.cleanPhone,
-      },
-      network: routing.network,
-      metadata: {
-        merchant_reference: reference,
-        plan_id: plan.id,
-        user_id: params.userId,
-      },
-      return_url: params.returnUrl || `${process.env.APP_URL || ''}/pricing`,
-    };
+    let t1 = Date.now();
+    let t2 = Date.now();
 
-    try {
-      const res = await fetch(`${this.baseUrl}/payments/softpay/`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.secretKey}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idempotencyKey,
+    // 1. DIRECT PUSH VIA SOFTPAY (POST /payments/softpay/)
+    // Dispatched immediately for mobile networks without unnecessary sequential pre-checks
+    if (routing.preferredChannel === 'softpay') {
+      const endpoint = `${this.baseUrl}/payments/softpay/`;
+      t1 = Date.now();
+      const t1Iso = new Date(t1).toISOString();
+      const prepMs = t1 - t0;
+
+      console.log(
+        `[PAYMENT_REQUEST_SENT_TO_SASPAY] transactionId=${reference} endpoint=${endpoint} method=POST amount=${plan.price} operator=${routing.network} phone=${maskedPhone} t1=${t1Iso} prepMs=${prepMs}ms`
+      );
+
+      const idempotencyKey = `idem-${reference}-${Date.now()}`;
+      const softpayPayload = {
+        amount: String(plan.price.toFixed(2)),
+        currency: 'USD',
+        country: routing.country,
+        description: `SITDOWORLD IA Music - Pack ${plan.name} (${plan.songs} chansons)`,
+        customer: {
+          email: params.customerEmail || 'sitdoworldinformatique@gmail.com',
+          first_name: 'Client',
+          last_name: 'SITDOWORLD',
+          phone: routing.cleanPhone,
         },
-        body: JSON.stringify(payload),
-      });
-
-      console.log(`[SASPAY_RESPONSE_RECEIVED] HTTP ${res.status}`);
-      const data = await res.json().catch(() => ({}));
-
-      if (res.status === 201 && data?.success) {
-        const providerId = data.data?.id;
-        const checkoutUrl = data.data?.checkout_url || '';
-        const instructions = data.data?.instructions || [];
-
-        payment.provider_transaction_id = providerId;
-        payment.checkout_url = checkoutUrl;
-        payment.instructions = instructions;
-        payment.status = 'PENDING';
-        payment.updated_at = new Date().toISOString();
-        db.savePayment(payment);
-
-        console.log(`[PAYMENT_PROVIDER_TRANSACTION_CREATED] provider_id=${providerId}`);
-        console.log(`[MOBILE_MONEY_PUSH_REQUESTED] network=${routing.network} phone=${maskedPhone}`);
-        console.log(`[PAYMENT_PENDING] reference=${reference} status=PENDING`);
-
-        db.logEvent('payment_created', params.userId, {
-          reference,
+        network: routing.network,
+        metadata: {
           merchant_reference: reference,
-          provider_transaction_id: providerId,
-          planId: plan.id,
-          amount: plan.price,
-          currency: plan.currency,
-          country: routing.country,
-          network: routing.network,
-          has_checkout_url: !!checkoutUrl,
-          status: 'PENDING',
-        });
+          plan_id: plan.id,
+          user_id: params.userId,
+        },
+        return_url: params.returnUrl || `${process.env.APP_URL || ''}/pricing`,
+      };
 
-        // Launch server-side background poller (Step 7)
-        this.startBackgroundPoller(reference, providerId);
-
-        return {
-          success: true,
+      try {
+        const res = await saspayFetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.secretKey}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify(softpayPayload),
+          signal: AbortSignal.timeout(9000), // Optimal 9s window for carrier push handshake
+          label: 'softpay_direct_push',
           transactionReference: reference,
-          transaction_reference: reference,
-          merchant_reference: reference,
-          provider_transaction_id: providerId,
-          checkout_url: checkoutUrl,
-          checkoutUrl: checkoutUrl || `/payment/checkout?ref=${reference}`,
-          amount: plan.price,
-          currency: plan.currency,
-          songs: plan.songs,
-          planName: plan.name,
-          status: 'PENDING',
-          instructions,
-          network: routing.network,
-          country: routing.country,
-          message: checkoutUrl
-            ? 'Demande de paiement transmise. Veuillez valider sur votre téléphone ou ouvrir la page de validation.'
-            : 'Demande de paiement envoyée. Vérifiez votre téléphone Mobile Money et saisissez votre PIN pour confirmer.',
-        };
-      } else {
-        const errMsg = data?.error ? JSON.stringify(data.error) : data?.message || `Erreur SASPAY (HTTP ${res.status})`;
-        console.log(`[PAYMENT_FAILED] Gateway rejected payment: ${errMsg}`);
-        payment.status = 'FAILED';
-        payment.failure_reason = errMsg;
-        payment.updated_at = new Date().toISOString();
-        db.savePayment(payment);
-
-        db.logEvent('payment_failed', params.userId, {
-          reference,
-          error: errMsg,
-          status: 'FAILED',
         });
 
-        throw new Error(`Échec de l'initiation SASPAY: ${errMsg}`);
+        t2 = Date.now();
+        const t2Iso = new Date(t2).toISOString();
+        const providerLatencyMs = t2 - t1;
+        const totalMs = t2 - t0;
+
+        console.log(
+          `[SASPAY_RESPONSE_RECEIVED] transactionId=${reference} endpoint=${endpoint} httpStatus=${res.status} latency=${providerLatencyMs}ms total=${totalMs}ms timestamp=${t2Iso}`
+        );
+
+        const data = await res.json().catch(() => ({}));
+
+        if (res.status === 201 && data?.success) {
+          providerInitiated = true;
+          sessionType = 'softpay';
+          providerId = data.data?.id;
+          checkoutUrl = data.data?.checkout_url || '';
+          instructions = data.data?.instructions || [
+            'Une notification de paiement Mobile Money a été transmise à votre téléphone.',
+            'Saisissez votre code secret Mobile Money (PIN) pour approuver le règlement.',
+          ];
+          isDirectPush = !checkoutUrl;
+          finalStatus = isDirectPush ? 'PENDING_CUSTOMER_CONFIRMATION' : 'CHECKOUT_REQUIRED';
+        } else {
+          const errCode = data?.error?.code || '';
+          const errMsg = data?.error?.message || data?.message || `HTTP ${res.status}`;
+          console.log(
+            `[PAYMENT] Softpay direct push returned ${res.status} (${errCode}: ${errMsg}). Fast failover to hosted checkout...`
+          );
+        }
+      } catch (err: any) {
+        t2 = Date.now();
+        console.log(`[PAYMENT] Softpay attempt failed or timed out (${err.message}). Immediate failover to hosted checkout...`);
       }
-    } catch (err: any) {
-      console.log(`[PAYMENT_FAILED] Exception during SASPAY push: ${err.message}`);
-      throw err;
     }
+
+    // 2. CHECKOUT-SESSIONS (Fallback or Default for Card / Hosted sessions)
+    if (!providerInitiated) {
+      sessionType = 'checkout_session';
+      const sessionEndpoint = `${this.baseUrl}/checkout-sessions/`;
+      t1 = Date.now();
+      const t1Iso = new Date(t1).toISOString();
+      const prepMs = t1 - t0;
+
+      console.log(
+        `[PAYMENT_REQUEST_SENT_TO_SASPAY] transactionId=${reference} endpoint=${sessionEndpoint} method=POST amount=${plan.price} operator=${routing.network} phone=${maskedPhone} t1=${t1Iso} prepMs=${prepMs}ms`
+      );
+
+      const sessionPayload: any = {
+        amount: String(plan.price.toFixed(2)),
+        currency: 'USD',
+        description: `SITDOWORLD IA Music - Pack ${plan.name} (${plan.songs} chansons)`,
+        customer_email: params.customerEmail || 'sitdoworldinformatique@gmail.com',
+        customer_name: 'Client SITDOWORLD',
+        customer_phone: routing.cleanPhone,
+        return_url: params.returnUrl || `${process.env.APP_URL || ''}/pricing`,
+        metadata: {
+          merchant_reference: reference,
+          plan_id: plan.id,
+          user_id: params.userId,
+        },
+      };
+
+      if (routing.country && routing.country !== 'XX') {
+        sessionPayload.country = routing.country;
+      }
+
+      try {
+        const res = await saspayFetch(sessionEndpoint, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.secretKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(sessionPayload),
+          signal: AbortSignal.timeout(7500),
+          label: 'checkout_session_initiation',
+          transactionReference: reference,
+        });
+
+        t2 = Date.now();
+        const t2Iso = new Date(t2).toISOString();
+        const providerLatencyMs = t2 - t1;
+        const totalMs = t2 - t0;
+
+        console.log(
+          `[SASPAY_RESPONSE_RECEIVED] transactionId=${reference} endpoint=${sessionEndpoint} httpStatus=${res.status} latency=${providerLatencyMs}ms total=${totalMs}ms timestamp=${t2Iso}`
+        );
+
+        const data = await res.json().catch(() => ({}));
+
+        if (res.status === 201 && data?.success) {
+          providerInitiated = true;
+          providerId = data.data?.id;
+          checkoutUrl = data.data?.checkout_url || '';
+          finalStatus = 'CHECKOUT_REQUIRED';
+          isDirectPush = false;
+          instructions = [
+            'Une session sécurisée SASPAY.ME a été préparée pour votre opérateur.',
+            'Validez la transaction pour recevoir la confirmation sur votre mobile.',
+          ];
+        } else {
+          const errMsg = data?.error?.message || data?.message || `Erreur SASPAY (HTTP ${res.status})`;
+          payment.status = 'FAILED';
+          payment.failure_reason = errMsg;
+          payment.updated_at = new Date().toISOString();
+          db.savePayment(payment);
+          throw new Error(`SASPAY API Error: ${errMsg}`);
+        }
+      } catch (err: any) {
+        t2 = Date.now();
+        payment.status = 'FAILED';
+        payment.failure_reason = err.message;
+        payment.updated_at = new Date().toISOString();
+        db.savePayment(payment);
+        throw err;
+      }
+    }
+
+    // Success state update in local DB
+    payment.provider_transaction_id = providerId;
+    payment.session_type = sessionType;
+    payment.checkout_url = checkoutUrl;
+    payment.instructions = instructions;
+    payment.status = finalStatus;
+    payment.updated_at = new Date().toISOString();
+    db.savePayment(payment);
+
+    const t2Iso = new Date(t2).toISOString();
+    const t1Iso = new Date(t1).toISOString();
+    const prepMs = Math.max(0, t1 - t0);
+    const providerMs = Math.max(0, t2 - t1);
+    const totalMs = Math.max(0, t2 - t0);
+
+    // Precise structured logging with timestamps
+    console.log(`\n=======================================================`);
+    console.log(`[TIMING_AUDIT] Demande OTP / Confirmation Mobile Money [${reference}]`);
+    console.log(`├─ Heure demande client (t0)       : ${t0Iso}`);
+    console.log(`├─ Heure envoi vers SASPAY (t1)    : ${t1Iso} (préparation interne backend: ${prepMs}ms)`);
+    console.log(`├─ Heure réponse SASPAY (t2)       : ${t2Iso} (latence API fournisseur: ${providerMs}ms)`);
+    console.log(`└─ Latence totale de traitement    : ${totalMs}ms`);
+    console.log(`[LATENCY_BREAKDOWN] Décomposition du délai :`);
+    console.log(`  1. Traitement interne Backend  : ${prepMs}ms (optimal, 0 attente artificielle)`);
+    console.log(`  2. API Fournisseur SASPAY.ME   : ${providerMs}ms (réponse HTTP opérateur)`);
+    console.log(`  3. Réseau Télécom / USSD Push  : En cours de délivrance vers le terminal ${maskedPhone} (${routing.network})`);
+    console.log(`=======================================================\n`);
+
+    // Non-blocking background poller
+    if (providerId) {
+      this.startBackgroundPoller(reference, providerId, sessionType);
+    }
+
+    return {
+      success: true,
+      transactionReference: reference,
+      transaction_reference: reference,
+      merchant_reference: reference,
+      provider_transaction_id: providerId,
+      session_type: sessionType,
+      checkout_url: checkoutUrl,
+      checkoutUrl: checkoutUrl || `/payment/checkout?ref=${reference}`,
+      amount: plan.price,
+      currency: plan.currency,
+      songs: plan.songs,
+      planName: plan.name,
+      status: finalStatus,
+      instructions,
+      network: routing.network,
+      country: routing.country,
+      requires_redirect: !isDirectPush,
+      message: isDirectPush
+        ? 'Demande de paiement envoyée instantanément. Vérifiez votre téléphone Mobile Money et saisissez votre PIN pour confirmer.'
+        : 'Session sécurisée prête. Ouvrez le guichet de validation pour confirmer votre paiement.',
+      payment: { ...payment },
+      timings: {
+        t0_request_received: t0Iso,
+        t1_provider_dispatched: t1Iso,
+        t2_provider_responded: t2Iso,
+        backend_prep_ms: prepMs,
+        provider_latency_ms: providerMs,
+        total_latency_ms: totalMs,
+      },
+      latency_breakdown: {
+        client_to_backend: `${prepMs}ms (traitement local non-bloquant)`,
+        backend_internal: `${prepMs}ms`,
+        saspay_api: `${providerMs}ms`,
+        telecom_operator: `En cours d'acheminement vers ${maskedPhone} (${routing.network})`,
+      },
+    };
   }
 
-  // Server-side Background Poller (Step 7)
-  // Periodically queries GET /payments/{id}/verify/ every 6 seconds for up to 2.5 minutes
-  private startBackgroundPoller(reference: string, providerId?: string) {
+
+  /**
+   * Server-side Background Poller (Step 7).
+   * Periodically queries SasPay gateway every 6 seconds for up to 2.5 minutes (~25 attempts).
+   * Stops immediately upon terminal state (CONFIRMED, FAILED, CANCELLED, EXPIRED).
+   */
+  private startBackgroundPoller(
+    reference: string,
+    providerId?: string,
+    sessionType: 'softpay' | 'checkout_session' = 'softpay'
+  ) {
     if (!providerId) return;
 
-    // Clear existing timer if any
     if (this.activePollers.has(reference)) {
       clearInterval(this.activePollers.get(reference)!);
       this.activePollers.delete(reference);
     }
 
     let attempts = 0;
-    const maxAttempts = 25; // 25 * 6s = 150 seconds (~2.5 minutes)
+    const maxAttempts = 25; // 25 * 6s = 150 seconds (2.5 minutes)
 
     const timer = setInterval(async () => {
       attempts += 1;
       try {
-        console.log(`[PAYMENT_STATUS_CHECK] Poll attempt ${attempts}/${maxAttempts} for ref ${reference}`);
+        console.log(`[PAYMENT_STATUS_CHECK] Poll attempt ${attempts}/${maxAttempts} for ref ${reference} (${sessionType})`);
         const result = await this.verifyTransactionStatus(reference);
 
-        if (result.verified || ['CONFIRMED', 'PAID', 'SUCCESS', 'FAILED', 'CANCELLED', 'EXPIRED'].includes(result.payment.status.toUpperCase())) {
+        if (
+          result.verified ||
+          ['CONFIRMED', 'PAID', 'SUCCESS', 'FAILED', 'CANCELLED', 'EXPIRED'].includes(
+            String(result.payment.status || '').toUpperCase()
+          )
+        ) {
           console.log(`[PAYMENT_STATUS_CHECK] Poller reached final state: ${result.payment.status}. Stopping poller.`);
           clearInterval(timer);
           this.activePollers.delete(reference);
@@ -502,7 +846,11 @@ export class SaspayService {
     this.activePollers.set(reference, timer);
   }
 
-  // Official Polling / Status Verification against SasPay (Step 7 & 9)
+  /**
+   * Official Polling / Status Verification against SasPay (Step 7 & 9).
+   * Supports both direct softpay verification (GET /payments/{id}/verify/)
+   * and checkout session status check (GET /checkout-sessions/{id}/status/).
+   */
   public async verifyTransactionStatus(
     referenceOrId: string
   ): Promise<{ payment: Payment; verified: boolean; message: string }> {
@@ -513,7 +861,7 @@ export class SaspayService {
 
     const currentStatus = String(payment.status || '').toUpperCase();
 
-    // If already finalized and confirmed, return success
+    // 1. If already finalized and confirmed, return success
     if (currentStatus === 'CONFIRMED' || currentStatus === 'PAID' || currentStatus === 'SUCCESS') {
       return {
         payment,
@@ -522,7 +870,7 @@ export class SaspayService {
       };
     }
 
-    // If already failed / cancelled / expired
+    // 2. If already failed / cancelled / expired
     if (currentStatus === 'FAILED' || currentStatus === 'CANCELLED' || currentStatus === 'EXPIRED') {
       return {
         payment,
@@ -531,64 +879,168 @@ export class SaspayService {
       };
     }
 
-    // Payment is still PENDING or PROCESSING: Check live state with SasPay API
+    // 3. Payment is still PENDING or PROCESSING: Check live state with SasPay API
     const queryId = payment.provider_transaction_id;
     if (queryId && this.secretKey) {
       try {
-        console.log(`[PAYMENT_STATUS_CHECK] GET ${this.baseUrl}/payments/${queryId}/verify/`);
-        const res = await fetch(`${this.baseUrl}/payments/${queryId}/verify/`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${this.secretKey}`,
-            'Accept': 'application/json',
-          },
-        });
+        if (payment.session_type === 'checkout_session') {
+          // Checkout Session verification (GET /checkout-sessions/{id}/status/)
+          console.log(`[PAYMENT_STATUS_CHECK] GET ${this.baseUrl}/checkout-sessions/${queryId}/status/`);
+          const res = await saspayFetch(`${this.baseUrl}/checkout-sessions/${queryId}/status/`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${this.secretKey}`,
+              'Accept': 'application/json',
+            },
+            label: 'checkout_session_status_check',
+            transactionReference: payment.merchant_reference,
+          });
 
-        if (res.ok) {
-          const data = await res.json();
-          const remoteStatus = String(data?.data?.status || data?.status || '').toUpperCase();
-          console.log(`[PAYMENT_STATUS_CHECK] SasPay verify returned status=${remoteStatus}`);
+          if (res.ok) {
+            const data = await res.json();
+            const sessionStatus = String(data?.data?.status || '').toUpperCase();
+            const txStatus = String(data?.data?.transaction_status || '').toUpperCase();
+            console.log(`[PAYMENT_STATUS_CHECK] SasPay checkout session returned status=${sessionStatus} txStatus=${txStatus}`);
 
-          if (remoteStatus === 'SUCCESS' || remoteStatus === 'PAID' || remoteStatus === 'COMPLETED') {
-            // CONFIRMATION RÉELLE CÔTÉ SASPAY!
-            payment.status = 'CONFIRMED';
-            payment.verified_by_provider = true;
-            payment.paid_at = new Date().toISOString();
-            payment.updated_at = new Date().toISOString();
+            if (sessionStatus === 'PAID' || txStatus === 'SUCCESS') {
+              // REAL CONFIRMATION FROM SASPAY GATEWAY!
+              payment.status = 'CONFIRMED';
+              payment.verified_by_provider = true;
+              payment.paid_at = new Date().toISOString();
+              payment.updated_at = new Date().toISOString();
 
-            const plan = db.plans.find((p) => p.id === payment.plan_id);
-            const songsToCredit = plan ? plan.songs : payment.songs_quantity || 2;
+              const plan = db.plans.find((p) => p.id === payment.plan_id);
+              const songsToCredit = plan ? plan.songs : payment.songs_quantity || 2;
 
-            db.creditSongsFromPayment(payment, songsToCredit);
+              db.creditSongsFromPayment(payment, songsToCredit);
 
-            console.log(`[PAYMENT_CONFIRMED] payment confirmed via SasPay verify endpoint`);
-            console.log(`[PAYMENT] songs_credited=${songsToCredit}`);
+              console.log(
+                `[PAYMENT_STATUS_UPDATED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} status=CONFIRMED timestamp=${new Date().toISOString()}`
+              );
+              console.log(
+                `[PAYMENT_CONFIRMED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} songsCredited=${songsToCredit} status=CONFIRMED timestamp=${new Date().toISOString()}`
+              );
 
-            db.logEvent('payment_success', payment.user_id, {
-              reference: payment.merchant_reference,
-              amount: payment.amount,
-              currency: payment.currency,
-              songsCredited: songsToCredit,
-              provider_transaction_id: payment.provider_transaction_id,
-            });
+              db.logEvent('payment_success', payment.user_id, {
+                reference: payment.merchant_reference,
+                amount: payment.amount,
+                currency: payment.currency,
+                songsCredited: songsToCredit,
+                provider_transaction_id: payment.provider_transaction_id,
+              });
 
-            return {
-              payment,
-              verified: true,
-              message: `Paiement confirmé par SASPay. ${songsToCredit} créations créditées.`,
-            };
-          } else if (remoteStatus === 'FAILED' || remoteStatus === 'CANCELLED') {
-            payment.status = remoteStatus === 'CANCELLED' ? 'CANCELLED' : 'FAILED';
-            payment.failure_reason = 'Le paiement a été rejeté ou annulé par l’opérateur Mobile Money.';
-            payment.updated_at = new Date().toISOString();
-            db.savePayment(payment);
+              return {
+                payment,
+                verified: true,
+                message: `Paiement confirmé par SASPay. ${songsToCredit} créations créditées.`,
+              };
+            } else if (sessionStatus === 'CANCELLED') {
+              payment.status = 'CANCELLED';
+              payment.failure_reason = 'Paiement annulé.';
+              payment.updated_at = new Date().toISOString();
+              db.savePayment(payment);
 
-            console.log(`[PAYMENT_FAILED] status=${payment.status}`);
-            return {
-              payment,
-              verified: false,
-              message: payment.failure_reason,
-            };
+              console.log(
+                `[PAYMENT_CANCELLED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} status=CANCELLED timestamp=${new Date().toISOString()}`
+              );
+              return { payment, verified: false, message: payment.failure_reason };
+            } else if (sessionStatus === 'EXPIRED') {
+              payment.status = 'EXPIRED';
+              payment.failure_reason = 'La session de paiement a expiré.';
+              payment.updated_at = new Date().toISOString();
+              db.savePayment(payment);
+
+              console.log(
+                `[PAYMENT_FAILED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} status=EXPIRED reason="La session a expiré." timestamp=${new Date().toISOString()}`
+              );
+              return { payment, verified: false, message: payment.failure_reason };
+            }
+          }
+        } else {
+          // Direct softpay verification (GET /payments/{id}/verify/)
+          console.log(`[PAYMENT_STATUS_CHECK] GET ${this.baseUrl}/payments/${queryId}/verify/`);
+          const res = await saspayFetch(`${this.baseUrl}/payments/${queryId}/verify/`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${this.secretKey}`,
+              'Accept': 'application/json',
+            },
+            label: 'softpay_status_verify',
+            transactionReference: payment.merchant_reference,
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            const remoteStatus = String(data?.data?.status || data?.status || '').toUpperCase();
+            console.log(`[PAYMENT_STATUS_CHECK] SasPay softpay returned status=${remoteStatus}`);
+
+            if (remoteStatus === 'SUCCESS' || remoteStatus === 'PAID' || remoteStatus === 'COMPLETED') {
+              // REAL CONFIRMATION FROM SASPAY GATEWAY!
+              payment.status = 'CONFIRMED';
+              payment.verified_by_provider = true;
+              payment.paid_at = new Date().toISOString();
+              payment.updated_at = new Date().toISOString();
+
+              const plan = db.plans.find((p) => p.id === payment.plan_id);
+              const songsToCredit = plan ? plan.songs : payment.songs_quantity || 2;
+
+              db.creditSongsFromPayment(payment, songsToCredit);
+
+              console.log(
+                `[PAYMENT_STATUS_UPDATED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} status=CONFIRMED timestamp=${new Date().toISOString()}`
+              );
+              console.log(
+                `[PAYMENT_CONFIRMED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} songsCredited=${songsToCredit} status=CONFIRMED timestamp=${new Date().toISOString()}`
+              );
+
+              db.logEvent('payment_success', payment.user_id, {
+                reference: payment.merchant_reference,
+                amount: payment.amount,
+                currency: payment.currency,
+                songsCredited: songsToCredit,
+                provider_transaction_id: payment.provider_transaction_id,
+              });
+
+              return {
+                payment,
+                verified: true,
+                message: `Paiement confirmé par SASPay. ${songsToCredit} créations créditées.`,
+              };
+            } else if (remoteStatus === 'FAILED' || remoteStatus === 'CANCELLED' || remoteStatus === 'EXPIRED') {
+              const remoteMsg = String(data?.data?.reason || data?.message || data?.error?.message || '').toLowerCase();
+              const isInsufficient = /solde|insufficient|balance|funds/i.test(remoteMsg);
+
+              if (isInsufficient) {
+                payment.status = 'INSUFFICIENT_FUNDS';
+                payment.failure_reason = 'Solde Mobile Money insuffisant.';
+              } else if (remoteStatus === 'CANCELLED') {
+                payment.status = 'CANCELLED';
+                payment.failure_reason = 'Paiement annulé.';
+              } else if (remoteStatus === 'EXPIRED') {
+                payment.status = 'EXPIRED';
+                payment.failure_reason = 'Le délai de confirmation est dépassé.';
+              } else {
+                payment.status = 'FAILED';
+                payment.failure_reason = 'Le paiement a été rejeté ou annulé par l’opérateur Mobile Money.';
+              }
+              payment.updated_at = new Date().toISOString();
+              db.savePayment(payment);
+
+              if (payment.status === 'CANCELLED') {
+                console.log(
+                  `[PAYMENT_CANCELLED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} status=CANCELLED timestamp=${new Date().toISOString()}`
+                );
+              } else {
+                console.log(
+                  `[PAYMENT_FAILED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} status=${payment.status} reason="${payment.failure_reason}" timestamp=${new Date().toISOString()}`
+                );
+              }
+              return {
+                payment,
+                verified: false,
+                message: payment.failure_reason,
+              };
+            }
           }
         }
       } catch (err: any) {
@@ -596,14 +1048,16 @@ export class SaspayService {
       }
     }
 
-    // Check expiration (2.5 minutes for mobile money session)
+    // Check expiration (2.5 minutes timeout for mobile money confirmation session)
     const twoAndHalfMinutesAgo = Date.now() - 150 * 1000;
     if (new Date(payment.created_at).getTime() < twoAndHalfMinutesAgo) {
       payment.status = 'EXPIRED';
       payment.failure_reason = 'Le délai de confirmation est dépassé (2 minutes).';
       payment.updated_at = new Date().toISOString();
       db.savePayment(payment);
-      console.log(`[PAYMENT_FAILED] reference=${payment.merchant_reference} reason=EXPIRED`);
+      console.log(
+        `[PAYMENT_FAILED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} status=EXPIRED reason="Délai dépassé." timestamp=${new Date().toISOString()}`
+      );
 
       return {
         payment,
@@ -615,18 +1069,21 @@ export class SaspayService {
     return {
       payment,
       verified: false,
-      message: 'En attente de confirmation sur votre téléphone...',
+      message: payment.checkout_url
+        ? 'En attente de validation sur le guichet sécurisé...'
+        : 'En attente de confirmation sur votre téléphone...',
     };
   }
 
-  // Process Webhook from SasPay (Step 6)
+  /**
+   * Process Webhook from SasPay (Step 6).
+   * Verified with cryptographic signature and strictly idempotent.
+   */
   public processWebhook(
     payload: any,
     headersOrSignature?: Record<string, string | string[] | undefined> | string,
     rawBody?: string
   ): { success: boolean; message: string; duplicate?: boolean; payment?: Payment } {
-    console.log(`[WEBHOOK_RECEIVED] incoming webhook event`);
-
     let headers: Record<string, string | string[] | undefined> | undefined;
     let fallbackSig: string | undefined;
 
@@ -654,6 +1111,10 @@ export class SaspayService {
       return { success: false, message: 'Transaction non trouvée.' };
     }
 
+    console.log(
+      `[WEBHOOK_RECEIVED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id || 'N/A'} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} status=${payment.status} event=${eventType} timestamp=${new Date().toISOString()}`
+    );
+
     // Signature verification
     const sigHeader =
       fallbackSig ||
@@ -665,13 +1126,20 @@ export class SaspayService {
     if (rawBody && sigHeader) {
       const isValid = this.verifySaspayWebhookSignature(rawBody, sigHeader, tsHeader);
       if (!isValid) {
-        console.log(`[PAYMENT_FAILED] Invalid webhook signature`);
+        console.log(
+          `[PAYMENT_FAILED] transactionId=${payment.merchant_reference} reason="Invalid webhook signature" timestamp=${new Date().toISOString()}`
+        );
         return { success: false, message: 'Signature webhook invalide.' };
       }
     }
 
-    // Idempotency check: if already confirmed/paid, return success
-    if (payment.status === 'CONFIRMED' || payment.status === 'PAID' || payment.status === 'SUCCESS' || payment.pack_credited) {
+    // Idempotency check: if already confirmed/paid, return success without duplicate crediting
+    if (
+      payment.status === 'CONFIRMED' ||
+      payment.status === 'PAID' ||
+      payment.status === 'SUCCESS' ||
+      payment.pack_credited
+    ) {
       console.log(`[PAYMENT] Idempotent skip: payment already confirmed and credited`);
       return {
         success: true,
@@ -682,7 +1150,12 @@ export class SaspayService {
     }
 
     const rawStatus = String(data.status || payload.status || '').toUpperCase();
-    const isSuccess = eventType === 'transaction.success' || ['SUCCESS', 'PAID', 'COMPLETED'].includes(rawStatus);
+    const isSuccess =
+      eventType === 'transaction.success' ||
+      eventType === 'checkout.session.paid' ||
+      eventType === 'payment.success' ||
+      ['SUCCESS', 'PAID', 'COMPLETED'].includes(rawStatus);
+
     const isCancelled = eventType === 'transaction.cancelled' || ['CANCELLED', 'CANCELED'].includes(rawStatus);
 
     if (isSuccess) {
@@ -697,7 +1170,12 @@ export class SaspayService {
 
       db.creditSongsFromPayment(payment, songsToCredit);
 
-      console.log(`[PAYMENT_CONFIRMED] Webhook processed successfully, songs credited=${songsToCredit}`);
+      console.log(
+        `[PAYMENT_STATUS_UPDATED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} status=CONFIRMED timestamp=${new Date().toISOString()}`
+      );
+      console.log(
+        `[PAYMENT_CONFIRMED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} songsCredited=${songsToCredit} status=CONFIRMED timestamp=${new Date().toISOString()}`
+      );
 
       return {
         success: true,
@@ -705,13 +1183,37 @@ export class SaspayService {
         payment,
       };
     } else {
-      payment.status = isCancelled ? 'CANCELLED' : 'FAILED';
-      payment.failure_reason = data.reason || data.message || 'Paiement non confirmé.';
+      const failReason = String(data.reason || data.message || payload.reason || payload.message || '').toLowerCase();
+      const isInsufficient = /solde|insufficient|balance|funds/i.test(failReason);
+      const isExpired = eventType === 'transaction.expired' || ['EXPIRED'].includes(rawStatus) || /expir/i.test(failReason);
+
+      if (isCancelled) {
+        payment.status = 'CANCELLED';
+        payment.failure_reason = 'Paiement annulé.';
+      } else if (isInsufficient) {
+        payment.status = 'INSUFFICIENT_FUNDS';
+        payment.failure_reason = 'Solde Mobile Money insuffisant.';
+      } else if (isExpired) {
+        payment.status = 'EXPIRED';
+        payment.failure_reason = 'Le délai de confirmation est dépassé.';
+      } else {
+        payment.status = 'FAILED';
+        payment.failure_reason = data.reason || data.message || payload.reason || payload.message || 'Paiement non confirmé.';
+      }
+
       payment.webhook_received = true;
       payment.updated_at = new Date().toISOString();
       db.savePayment(payment);
 
-      console.log(`[PAYMENT_FAILED] Webhook reported failure: ${payment.failure_reason}`);
+      if (payment.status === 'CANCELLED') {
+        console.log(
+          `[PAYMENT_CANCELLED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} status=CANCELLED timestamp=${new Date().toISOString()}`
+        );
+      } else {
+        console.log(
+          `[PAYMENT_FAILED] transactionId=${payment.merchant_reference} providerTransactionId=${payment.provider_transaction_id} userId=${payment.user_id} amount=${payment.amount} operator=${payment.network} status=${payment.status} reason="${payment.failure_reason}" timestamp=${new Date().toISOString()}`
+        );
+      }
       return {
         success: false,
         message: payment.failure_reason || 'Paiement non confirmé.',

@@ -1,6 +1,7 @@
 import { geminiProvider } from './GeminiProvider';
 import { aiProviderManager } from './AIProviderManager';
 import { loadConfig, maskSecret } from '../../config';
+import { supabaseService } from '../supabase';
 
 export interface ComponentHealth {
   status: 'ok' | 'degraded' | 'not_configured' | 'error';
@@ -14,6 +15,7 @@ export interface SystemHealthReport {
   server: 'ok';
   gemini: 'ok' | 'not_configured' | 'error';
   musicProvider: 'ok' | 'not_configured' | 'error';
+  database: 'ok' | 'not_configured' | 'error';
   storage: 'ok';
   authentication: 'ok';
   saspay: 'ok' | 'not_configured';
@@ -22,6 +24,7 @@ export interface SystemHealthReport {
   components: {
     gemini: ComponentHealth;
     musicProvider: ComponentHealth;
+    database: ComponentHealth;
     storage: ComponentHealth;
     authentication: ComponentHealth;
     saspay: ComponentHealth;
@@ -110,14 +113,28 @@ export class ProviderHealthCheck {
       },
     };
 
-    // 4. Authentication
+    // 4. Supabase Database
+    const dbStatus = supabaseService.getStatus();
+    const databaseHealth: ComponentHealth = {
+      status: dbStatus.connected ? 'ok' : 'not_configured',
+      configured: dbStatus.connected,
+      message: dbStatus.message,
+      details: {
+        type: dbStatus.type,
+        restUrl: dbStatus.restUrl,
+        projectRef: dbStatus.projectRef,
+        status: dbStatus.status,
+      },
+    };
+
+    // 5. Authentication
     const authHealth: ComponentHealth = {
       status: 'ok',
       configured: !!config.authSecret,
       message: 'Service d’authentification et RBAC actif',
     };
 
-    // 5. SASPAY Gateway
+    // 6. SASPAY Gateway
     const saspayConfigured = !!config.saspayApiKey;
     const saspayHealth: ComponentHealth = {
       status: saspayConfigured ? 'ok' : 'not_configured',
@@ -135,6 +152,7 @@ export class ProviderHealthCheck {
       server: 'ok',
       gemini: geminiHealth.status === 'ok' ? 'ok' : geminiHealth.configured ? 'error' : 'not_configured',
       musicProvider: musicHealth.status === 'ok' ? 'ok' : 'not_configured',
+      database: dbStatus.connected ? 'ok' : 'not_configured',
       storage: 'ok',
       authentication: 'ok',
       saspay: saspayConfigured ? 'ok' : 'not_configured',
@@ -143,6 +161,7 @@ export class ProviderHealthCheck {
       components: {
         gemini: geminiHealth,
         musicProvider: musicHealth,
+        database: databaseHealth,
         storage: storageHealth,
         authentication: authHealth,
         saspay: saspayHealth,

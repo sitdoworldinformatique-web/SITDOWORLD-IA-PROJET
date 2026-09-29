@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 /**
  * SITDOWORLD AI MUSIC - Universal Configuration & Secrets Management
  *
@@ -19,6 +21,12 @@ export interface AppConfig {
 
   storageUrl?: string;
   storageKey?: string;
+
+  // Supabase Database Connection
+  supabaseUrl: string;
+  supabaseRestUrl: string;
+  supabaseProjectRef: string;
+  supabaseKey?: string;
 
   authSecret: string;
 
@@ -47,14 +55,23 @@ export function loadConfig(): AppConfig {
 
   const sunorKey = process.env.SUNO_API_KEY || process.env.SUNOR_API_KEY || '';
 
-function cleanMusicApiUrl(raw?: string): string {
-  if (!raw) return 'https://sunor.cc/api/v1';
-  const trimmed = raw.trim().replace(/\/+$/, '');
-  if (trimmed.includes('/api-key') || trimmed.includes('/docs')) {
-    return 'https://sunor.cc/api/v1';
+  function cleanMusicApiUrl(raw?: string): string {
+    if (!raw) return 'https://sunor.cc/api/v1';
+    const trimmed = raw.trim().replace(/\/+$/, '');
+    if (trimmed.includes('/api-key') || trimmed.includes('/docs')) {
+      return 'https://sunor.cc/api/v1';
+    }
+    return trimmed;
   }
-  return trimmed;
-}
+
+  function cleanStorageUrl(raw?: string): string | undefined {
+    if (!raw) return undefined;
+    // Clean out previous corrupted URL or error report paths
+    if (raw.includes('Dashboard_bug') || raw.includes('removeChild') || raw.includes('support/new')) {
+      return undefined;
+    }
+    return raw.trim();
+  }
 
   const rawMusicUrl =
     process.env.SUNO_API_URL ||
@@ -63,6 +80,10 @@ function cleanMusicApiUrl(raw?: string): string {
     process.env.SUNOR_API_URL ||
     process.env.SUNOR_BASE_URL ||
     process.env.MUSIC_API_URL;
+
+  const supabaseRestUrl = (process.env.SUPABASE_REST_URL || 'https://pctngaoclnwpwouokwxc.supabase.co/rest/v1/').trim();
+  const supabaseUrl = (process.env.SUPABASE_URL || 'https://pctngaoclnwpwouokwxc.supabase.co').trim();
+  const supabaseKey = (process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
 
   return {
     aiProvider: (process.env.AI_PROVIDER || 'gemini').toLowerCase(),
@@ -76,23 +97,28 @@ function cleanMusicApiUrl(raw?: string): string {
     musicModel: process.env.MUSIC_MODEL || 'suno-v6',
     sunorApiKey: sunorKey,
 
-    storageUrl: process.env.STORAGE_URL,
+    storageUrl: cleanStorageUrl(process.env.STORAGE_URL),
     storageKey: process.env.STORAGE_KEY,
+
+    supabaseUrl,
+    supabaseRestUrl: supabaseRestUrl.endsWith('/') ? supabaseRestUrl : `${supabaseRestUrl}/`,
+    supabaseProjectRef: 'pctngaoclnwpwouokwxc',
+    supabaseKey,
 
     authSecret: process.env.AUTH_SECRET || 'f445f022c338041f353d25ccf0233643',
 
     saspayApiKey:
       process.env.SASPAY_SECRET_KEY ||
       process.env.SASPAY_API_KEY ||
-      'sk_live_CF7e31LlcQjfRMdmPDbM2UtTmT__FQHsVsXvauez5qg',
+      '',
     saspaySecret:
       process.env.SASPAY_SECRET_KEY ||
       process.env.SASPAY_SECRET ||
-      'sk_live_CF7e31LlcQjfRMdmPDbM2UtTmT__FQHsVsXvauez5qg',
-    saspayBaseUrl: process.env.SASPAY_BASE_URL || 'https://api.saspay.me/api/v1',
+      '',
+    saspayBaseUrl: (process.env.SASPAY_BASE_URL || 'https://api.saspay.me/api/v1').replace(/\/+$/, ''),
     saspayWebhookSecret:
       process.env.SASPAY_WEBHOOK_SECRET ||
-      'ce1cbaf1598a05c29cb316f2058b3ab793e8626ec44899e733868ff5a0649847',
+      '',
 
     nodeEnv: process.env.NODE_ENV || 'development',
   };
@@ -123,6 +149,7 @@ export interface EnvValidationStatus {
     storage: { configured: boolean; message: string };
     auth: { configured: boolean; message: string };
     saspay: { configured: boolean; message: string };
+    database: { configured: boolean; type: string; url: string; message: string };
   };
 }
 
@@ -145,6 +172,7 @@ export function validateEnvironment(): EnvValidationStatus {
   const storageConfigured = !!current.storageUrl || true; // Fallback to local memory cache
   const authConfigured = !!current.authSecret;
   const saspayConfigured = !!current.saspayApiKey;
+  const databaseConfigured = !!current.supabaseRestUrl;
 
   return {
     isValid: geminiConfigured,
@@ -174,6 +202,12 @@ export function validateEnvironment(): EnvValidationStatus {
       saspay: {
         configured: saspayConfigured,
         message: 'Passerelle Mobile Money SASPAY configurée.',
+      },
+      database: {
+        configured: databaseConfigured,
+        type: 'supabase',
+        url: current.supabaseRestUrl,
+        message: `Base de données connectée à Supabase REST (${current.supabaseProjectRef}) : ${current.supabaseRestUrl}`,
       },
     },
   };

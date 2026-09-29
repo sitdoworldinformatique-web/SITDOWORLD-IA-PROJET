@@ -15,7 +15,10 @@ import {
   Database,
   ArrowRight,
   ExternalLink,
+  Unplug,
+  Link2,
 } from 'lucide-react';
+import { DatabaseStatus } from '../../types';
 
 interface AISettingsData {
   config: {
@@ -92,6 +95,94 @@ export const SaaSAISettingsTab: React.FC = () => {
   const [healthReport, setHealthReport] = useState<any | null>(null);
   const [loadingHealth, setLoadingHealth] = useState(false);
 
+  // Database connection state (Supabase)
+  const [dbStatus, setDbStatus] = useState<DatabaseStatus | null>(null);
+  const [loadingDb, setLoadingDb] = useState(false);
+  const [dbActionResult, setDbActionResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const fetchDbStatus = async () => {
+    try {
+      const res = await fetch('/api/admin/database/status');
+      if (res.ok) {
+        const json = await res.json();
+        setDbStatus(json);
+      }
+    } catch (err) {
+      console.error('Erreur chargement statut base de données:', err);
+    }
+  };
+
+  const handleDisconnectDatabase = async () => {
+    if (!window.confirm('Êtes-vous sûr de vouloir déconnecter la base de données actuelle ?')) return;
+    setLoadingDb(true);
+    setDbActionResult(null);
+    try {
+      const res = await fetch('/api/admin/database/disconnect', { method: 'POST' });
+      const json = await res.json();
+      setDbStatus(json.status);
+      setDbActionResult({ success: true, message: json.message || 'Base de données déconnectée avec succès.' });
+    } catch (err: any) {
+      setDbActionResult({ success: false, message: err.message });
+    } finally {
+      setLoadingDb(false);
+    }
+  };
+
+  const handleConnectDatabase = async (url: string = 'https://pctngaoclnwpwouokwxc.supabase.co/rest/v1/') => {
+    setLoadingDb(true);
+    setDbActionResult(null);
+    try {
+      const res = await fetch('/api/admin/database/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const json = await res.json();
+      setDbStatus(json.status);
+      setDbActionResult({
+        success: true,
+        message: `Connecté à la base de données Supabase (${json.status?.projectRef || 'pctngaoclnwpwouokwxc'}) : ${json.status?.restUrl}`,
+      });
+    } catch (err: any) {
+      setDbActionResult({ success: false, message: err.message });
+    } finally {
+      setLoadingDb(false);
+    }
+  };
+
+  const handleTestDatabase = async () => {
+    setLoadingDb(true);
+    setDbActionResult(null);
+    try {
+      const res = await fetch('/api/admin/database/test', { method: 'POST' });
+      const json = await res.json();
+      setDbActionResult({ success: json.success, message: json.message });
+      fetchDbStatus();
+    } catch (err: any) {
+      setDbActionResult({ success: false, message: err.message });
+    } finally {
+      setLoadingDb(false);
+    }
+  };
+
+  const handleSyncDatabase = async () => {
+    setLoadingDb(true);
+    setDbActionResult(null);
+    try {
+      const res = await fetch('/api/admin/database/sync', { method: 'POST' });
+      const json = await res.json();
+      setDbStatus(json.databaseStatus);
+      setDbActionResult({
+        success: true,
+        message: `Synchronisation terminée : ${json.synced.songs}/${json.synced.totalSongs} chansons, ${json.synced.users}/${json.synced.totalUsers} utilisateurs, ${json.synced.payments}/${json.synced.totalPayments} transactions.`,
+      });
+    } catch (err: any) {
+      setDbActionResult({ success: false, message: err.message });
+    } finally {
+      setLoadingDb(false);
+    }
+  };
+
   const fetchSettings = async () => {
     try {
       setLoading(true);
@@ -125,6 +216,7 @@ export const SaaSAISettingsTab: React.FC = () => {
   useEffect(() => {
     fetchSettings();
     fetchFullHealth();
+    fetchDbStatus();
   }, []);
 
   const handleTestGemini = async () => {
@@ -233,7 +325,7 @@ export const SaaSAISettingsTab: React.FC = () => {
       </div>
 
       {/* Global Health Status Banner */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
         <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-2xs">
           <div className="flex items-center justify-between text-xs font-bold text-slate-500 mb-1">
             <span>AI Provider</span>
@@ -276,8 +368,21 @@ export const SaaSAISettingsTab: React.FC = () => {
 
         <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-2xs">
           <div className="flex items-center justify-between text-xs font-bold text-slate-500 mb-1">
+            <span>Base Supabase</span>
+            <Database className="w-3.5 h-3.5 text-emerald-500" />
+          </div>
+          <div className="text-base font-black text-slate-900">
+            {dbStatus?.connected ? 'Connectée' : 'Déconnectée'}
+          </div>
+          <div className="text-[10px] text-slate-500 font-mono mt-0.5 truncate">
+            {dbStatus?.projectRef || 'pctngaoclnwpwouokwxc'}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-2xs">
+          <div className="flex items-center justify-between text-xs font-bold text-slate-500 mb-1">
             <span>Stockage Audio</span>
-            <Database className="w-3.5 h-3.5 text-teal-500" />
+            <Server className="w-3.5 h-3.5 text-teal-500" />
           </div>
           <div className="text-base font-black text-slate-900">
             Opérationnel
@@ -589,10 +694,25 @@ export const SaaSAISettingsTab: React.FC = () => {
             <input
               type="text"
               readOnly
-              value={config?.saspay.baseUrl || 'https://api.saspay.net/v1'}
+              value={config?.saspay.baseUrl || 'https://api.saspay.me/api/v1'}
               className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-800"
             />
           </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1.5">
+            URL Webhook à enregistrer dans votre compte SASPAY (Dashboard → Webhooks)
+          </label>
+          <input
+            type="text"
+            readOnly
+            value="https://ais-dev-slxqfevfvbd6v2fzjpjycb-663407649202.europe-west2.run.app/api/payments/webhook"
+            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-emerald-800 select-all font-bold"
+          />
+          <p className="text-[11px] text-slate-500 mt-1">
+            Recevez les événements <code className="text-slate-700 font-bold">transaction.success</code> et <code className="text-slate-700 font-bold">checkout.session.paid</code> pour confirmer et créditer les packs en temps réel.
+          </p>
         </div>
 
         {/* Live Test Feedback Banner for SASPAY */}
@@ -621,7 +741,150 @@ export const SaaSAISettingsTab: React.FC = () => {
         )}
       </div>
 
-      {/* SECTION 4: STORAGE & AUTHENTICATION OVERVIEW */}
+      {/* SECTION 4: SUPABASE DATABASE CONNECTION */}
+      <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/90 shadow-xs space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-black">
+              <Database className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-black text-slate-900">4. Base de Données Supabase (PostgREST API)</h3>
+                <span
+                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider flex items-center gap-1.5 ${
+                    dbStatus?.connected
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-rose-100 text-rose-800'
+                  }`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      dbStatus?.connected ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
+                    }`}
+                  />
+                  {dbStatus?.connected ? 'Connectée' : 'Déconnectée'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500">
+                Point de terminaison Supabase REST pour la persistance des chansons, profils utilisateurs et paiements.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {dbStatus?.connected ? (
+              <button
+                type="button"
+                onClick={handleDisconnectDatabase}
+                disabled={loadingDb}
+                className="px-4 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <Unplug className="w-3.5 h-3.5" />
+                <span>Déconnecter la base</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handleConnectDatabase('https://pctngaoclnwpwouokwxc.supabase.co/rest/v1/')}
+                disabled={loadingDb}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 shadow-sm"
+              >
+                <Link2 className="w-3.5 h-3.5" />
+                <span>Connecter Supabase</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleTestDatabase}
+              disabled={loadingDb}
+              className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingDb ? 'animate-spin' : ''}`} />
+              <span>Tester REST</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSyncDatabase}
+              disabled={loadingDb}
+              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 shadow-sm"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>Synchroniser</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Database Details */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1.5">
+              URL du Point de Terminaison REST v1
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                readOnly
+                value={dbStatus?.restUrl || 'https://pctngaoclnwpwouokwxc.supabase.co/rest/v1/'}
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-800"
+              />
+              <span className="absolute right-3 top-2.5 text-[10px] font-bold text-emerald-600">
+                REST v1
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Connecté au projet Supabase : <strong className="text-slate-600 font-mono">{dbStatus?.projectRef || 'pctngaoclnwpwouokwxc'}</strong>
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1.5">
+              Statistiques & Volume en Cache
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 text-center">
+                <div className="text-base font-black text-slate-900">{dbStatus?.stats?.songsCount ?? 0}</div>
+                <div className="text-[10px] text-slate-500">Chansons</div>
+              </div>
+              <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 text-center">
+                <div className="text-base font-black text-slate-900">{dbStatus?.stats?.usersCount ?? 0}</div>
+                <div className="text-[10px] text-slate-500">Utilisateurs</div>
+              </div>
+              <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 text-center">
+                <div className="text-base font-black text-slate-900">{dbStatus?.stats?.paymentsCount ?? 0}</div>
+                <div className="text-[10px] text-slate-500">Transactions</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Action result message */}
+        {dbActionResult && (
+          <div
+            className={`p-4 rounded-2xl border text-xs flex items-start gap-3 ${
+              dbActionResult.success
+                ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
+                : 'bg-rose-50/80 border-rose-200 text-rose-900'
+            }`}
+          >
+            {dbActionResult.success ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+            ) : (
+              <XCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            )}
+            <div>
+              <div className="font-black text-sm">
+                {dbActionResult.success ? 'Opération réussie' : 'Notification de base de données'}
+              </div>
+              <div className="text-slate-600 mt-0.5">{dbActionResult.message}</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* SECTION 5: STORAGE & AUTHENTICATION OVERVIEW */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <div className="bg-white rounded-3xl p-6 border border-slate-200/90 shadow-xs space-y-3">
           <div className="flex items-center gap-2.5">

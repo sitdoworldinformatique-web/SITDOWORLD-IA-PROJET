@@ -85,6 +85,12 @@ export class AIProviderManager {
       type: string;
       configured: boolean;
     };
+    database?: {
+      type: string;
+      restUrl: string;
+      projectRef: string;
+      configured: boolean;
+    };
     saspay: {
       configured: boolean;
       maskedKey: string;
@@ -112,6 +118,12 @@ export class AIProviderManager {
       storage: {
         type: config.storageUrl ? 'Cloud Storage' : 'In-Memory Stream Buffer',
         configured: true,
+      },
+      database: {
+        type: 'supabase',
+        restUrl: config.supabaseRestUrl,
+        projectRef: config.supabaseProjectRef,
+        configured: !!config.supabaseRestUrl,
       },
       saspay: {
         configured: !!config.saspayApiKey,

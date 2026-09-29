@@ -11,7 +11,9 @@ import {
   User,
   GenerationJob,
   SaaSSettings,
+  DatabaseStatus,
 } from '../src/types';
+import { supabaseService } from './services/supabase';
 
 export const DEFAULT_SAAS_SETTINGS: SaaSSettings = {
   general: {
@@ -415,6 +417,7 @@ class Database {
   public templates: Template[] = [...TEMPLATES];
 
   public saasSettings: SaaSSettings = { ...DEFAULT_SAAS_SETTINGS };
+  public isTestMRRCleared: boolean = false;
 
   constructor() {
     this.seed();
@@ -694,6 +697,15 @@ class Database {
     if (payment.provider_transaction_id) {
       this.payments.set(payment.provider_transaction_id, payment);
     }
+
+    // Async sync to Supabase REST
+    supabaseService.syncPayment(payment).catch(() => {});
+  }
+
+  // Save song in local memory and sync to Supabase
+  public saveSong(song: Song): void {
+    this.songs.set(song.id, song);
+    supabaseService.syncSong(song).catch(() => {});
   }
 
   // Get payment with multi-index fallback (never fails with "Transaction non trouvée" if transaction exists)
@@ -1066,6 +1078,7 @@ class Database {
     }
 
     this.transactions = this.transactions.filter((tx) => tx.type !== 'PURCHASE' || !tx.reference.includes('SAS-'));
+    this.isTestMRRCleared = true;
 
     this.logEvent('test_payments_cleared', 'admin', {
       deletedCount,
@@ -1074,6 +1087,20 @@ class Database {
     });
 
     return { deletedCount, clearedRevenueUSD };
+  }
+
+  public clearTestMRR(): { success: boolean; mrr: number; message: string } {
+    this.isTestMRRCleared = true;
+    this.logEvent('test_mrr_cleared', 'admin', {
+      note: 'Suppression du chiffre MRR test et réinitialisation à 0$ par l’administrateur',
+      mrr: 0,
+      timestamp: new Date().toISOString(),
+    });
+    return {
+      success: true,
+      mrr: 0,
+      message: 'Chiffre MRR test supprimé avec succès. MRR réinitialisé à $0.',
+    };
   }
 
   public deleteSong(songId: string): boolean {
@@ -1127,6 +1154,43 @@ class Database {
 
     return { deletedCount, remainingSongs: this.songs.size };
   }
+
+  // ---------------- DATABASE DISCONNECTION & CONNECTION ----------------
+  public disconnectDatabase(): { success: boolean; message: string; previousUrl: string } {
+    const res = supabaseService.disconnect();
+    this.logEvent('database_disconnected', 'admin', {
+      action: 'DISCONNECT_DATABASE',
+      previousUrl: res.previousUrl,
+      timestamp: new Date().toISOString(),
+    });
+    return res;
+  }
+
+  public async connectDatabase(url: string, apiKey?: string): Promise<DatabaseStatus> {
+    const status = await supabaseService.connect(url, apiKey);
+    this.logEvent('database_connected', 'admin', {
+      action: 'CONNECT_DATABASE',
+      url: status.restUrl,
+      projectRef: status.projectRef,
+      status: status.status,
+      timestamp: new Date().toISOString(),
+    });
+    return this.getDatabaseStatus();
+  }
+
+  public getDatabaseStatus(): DatabaseStatus {
+    const base = supabaseService.getStatus();
+    const uniquePayments = Array.from(new Map(Array.from(this.payments.values()).map((p) => [p.id, p])).values());
+    return {
+      ...base,
+      stats: {
+        songsCount: this.songs.size,
+        usersCount: this.users.size,
+        paymentsCount: uniquePayments.length,
+      },
+    };
+  }
 }
 
 export const db = new Database();
+

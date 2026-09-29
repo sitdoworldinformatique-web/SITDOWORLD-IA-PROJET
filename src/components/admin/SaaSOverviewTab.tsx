@@ -13,6 +13,7 @@ import {
   Layers,
   Settings,
   CreditCard,
+  Trash2,
 } from 'lucide-react';
 import { Payment } from '../../types';
 
@@ -22,6 +23,7 @@ interface SaaSOverviewTabProps {
   onNavigateTab: (tabId: string) => void;
   onRefresh: () => void;
   onClearTestRevenue?: () => void;
+  onClearTestMRR?: () => void;
   onClearTestSongs?: () => void;
 }
 
@@ -31,10 +33,11 @@ export const SaaSOverviewTab: React.FC<SaaSOverviewTabProps> = ({
   onNavigateTab,
   onRefresh,
   onClearTestRevenue,
+  onClearTestMRR,
   onClearTestSongs,
 }) => {
-  const mrr = stats?.mrr ?? 52;
-  const totalRevenue = stats?.totalRevenue ?? 52;
+  const mrr = stats?.mrr ?? 0;
+  const totalRevenue = stats?.totalRevenue ?? 0;
   const totalUsers = stats?.totalUsers ?? 5;
   const activeUsers = stats?.activeUsers ?? 4;
   const totalSongs = stats?.totalSongs ?? 6;
@@ -64,24 +67,49 @@ export const SaaSOverviewTab: React.FC<SaaSOverviewTabProps> = ({
       {/* Executive SaaS KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {/* MRR Card */}
-        <div className="p-5 rounded-3xl bg-white border border-slate-200/90 shadow-xs relative overflow-hidden group hover:border-slate-300 transition-colors">
-          <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
-              MRR (Revenu Récurrent)
-            </span>
-            <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <TrendingUp className="w-4 h-4" />
+        <div className="p-5 rounded-3xl bg-white border border-slate-200/90 shadow-xs relative overflow-hidden group hover:border-slate-300 transition-colors flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-slate-400 mb-2">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
+                MRR (Revenu Récurrent)
+              </span>
+              <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                <TrendingUp className="w-4 h-4" />
+              </div>
             </div>
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-black text-slate-900">${mrr}</span>
-            <span className="text-xs font-bold text-emerald-600 flex items-center">
-              <ArrowUpRight className="w-3.5 h-3.5" /> +28%
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-black text-slate-900">${mrr}</span>
+              {mrr > 0 ? (
+                <span className="text-xs font-bold text-emerald-600 flex items-center">
+                  <ArrowUpRight className="w-3.5 h-3.5" /> +28%
+                </span>
+              ) : (
+                <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                  0$ (Réel)
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] text-slate-400 mt-1 block font-medium">
+              Marge brute estimée : ~84%
             </span>
           </div>
-          <span className="text-[11px] text-slate-400 mt-1 block font-medium">
-            Marge brute estimée : ~84%
-          </span>
+
+          {onClearTestMRR && (
+            <button
+              type="button"
+              onClick={onClearTestMRR}
+              className={`mt-3 w-full py-1.5 px-2.5 rounded-xl border text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                mrr > 0
+                  ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200 hover:border-rose-300 active:scale-95'
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-500 border-slate-200/80'
+              }`}
+              title="Supprimer le chiffre test du MRR et réinitialiser à 0$"
+              id="card-clear-test-mrr-btn"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{mrr > 0 ? 'Supprimer le MRR test ($0)' : 'MRR réinitialisé ($0)'}</span>
+            </button>
+          )}
         </div>
 
         {/* Total SASPAY Revenue */}
@@ -286,6 +314,19 @@ export const SaaSOverviewTab: React.FC<SaaSOverviewTabProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            {onClearTestMRR && (
+              <button
+                type="button"
+                onClick={onClearTestMRR}
+                className="px-4 py-2.5 rounded-xl bg-white hover:bg-emerald-50 text-emerald-700 border-2 border-emerald-300 font-extrabold text-xs flex items-center gap-2 transition-all cursor-pointer shadow-xs active:scale-95"
+                id="overview-clear-test-mrr-btn"
+                title="Supprimer le chiffre de test du MRR pour afficher 0$"
+              >
+                <TrendingUp className="w-4 h-4" />
+                <span>Supprimer le MRR Test ($0)</span>
+              </button>
+            )}
+
             {onClearTestRevenue && (
               <button
                 type="button"

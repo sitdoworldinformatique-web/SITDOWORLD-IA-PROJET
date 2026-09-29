@@ -35,6 +35,10 @@ export type PaymentStatus =
   | 'cancelled'
   | 'expired'
   | 'CREATED'
+  | 'INITIATING'
+  | 'PAYMENT_REQUEST_SENT'
+  | 'PENDING_CUSTOMER_CONFIRMATION'
+  | 'CHECKOUT_REQUIRED'
   | 'PENDING'
   | 'PROCESSING'
   | 'CONFIRMED'
@@ -43,9 +47,18 @@ export type PaymentStatus =
   | 'FAILED'
   | 'CANCELLED'
   | 'EXPIRED'
+  | 'INSUFFICIENT_FUNDS'
   | 'REFUNDED';
 
-export type PaymentMethod = 'orange_money' | 'mtn_momo' | 'wave' | 'vodacom_mpesa' | 'card';
+export type PaymentMethod =
+  | 'orange_money'
+  | 'mtn_momo'
+  | 'wave'
+  | 'vodacom_mpesa'
+  | 'airtel_cd'
+  | 'orange_cd'
+  | 'moov_money'
+  | 'card';
 
 export interface Payment {
   id: string;
@@ -59,6 +72,7 @@ export interface Payment {
   currency: string;
   status: PaymentStatus;
   provider_transaction_id?: string;
+  session_type?: 'softpay' | 'checkout_session';
   checkout_url?: string;
   instructions?: string[];
   network?: string;
@@ -311,8 +325,28 @@ export interface AdminLog {
     | 'payment_deleted'
     | 'test_payments_cleared'
     | 'song_deleted'
-    | 'test_songs_cleared';
+    | 'test_songs_cleared'
+    | 'test_mrr_cleared'
+    | 'database_disconnected'
+    | 'database_connected';
   user_id?: string;
   details: Record<string, unknown>;
   timestamp: string;
 }
+
+export interface DatabaseStatus {
+  connected: boolean;
+  type: 'supabase' | 'in_memory' | 'disconnected';
+  url: string;
+  restUrl: string;
+  projectRef: string;
+  status: 'connected' | 'disconnected' | 'awaiting_key';
+  message: string;
+  lastChecked: string;
+  stats?: {
+    songsCount: number;
+    usersCount: number;
+    paymentsCount: number;
+  };
+}
+

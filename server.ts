@@ -3,6 +3,9 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { db } from './server/db';
 import { saspayService } from './server/saspay';
+import { saspayConfigManager } from './server/saspayConfig';
+import { getRecentSaspayOutgoingLogs, clearSaspayOutgoingLogs } from './server/saspayLogger';
+import { saspayLoggerMiddleware } from './src/server/middleware/saspayLogger';
 import { musicProvider } from './server/musicProvider';
 import {
   getGeminiEnvironmentStatus,
@@ -20,6 +23,7 @@ import { saspMeProvider } from './server/services/saspme/SaspMeProvider';
 import { validateEnvironment, loadConfig } from './server/config';
 import { generatedAudioStore } from './server/services/ai/MusicProvider';
 import { sunorMusicProvider } from './server/services/ai/SunorMusicProvider';
+import { supabaseService } from './server/services/supabase';
 
 async function startServer() {
   const app = express();
@@ -34,6 +38,7 @@ async function startServer() {
     })
   );
   app.use(express.urlencoded({ extended: true }));
+  app.use(saspayLoggerMiddleware);
 
   // Request logger
   app.use((req, res, next) => {
@@ -531,8 +536,9 @@ async function startServer() {
           model: 'gemini-2.5-flash',
         },
         saspay: {
-          configured: true,
-          gateway: 'SASPAY MOBILE MONEY & CARDS',
+          configured: saspayConfigManager.getPublicConfig().isConfigured,
+          active: saspayConfigManager.getPublicConfig().isActive,
+          gateway: 'SASPAY.ME MOBILE MONEY',
         },
       },
     });
@@ -866,6 +872,63 @@ async function startServer() {
     const result = saspayService.processWebhook(payload, sig);
     const balance = db.getBalance(payment.user_id);
     res.json({ ...result, payment: db.getPayment(payment.merchant_reference), balance });
+  });
+
+  // 5. Get recent outgoing Saspay logs (with credentials strictly redacted)
+  app.get('/api/admin/saspay/logs', (req, res) => {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const logs = getRecentSaspayOutgoingLogs(limit);
+    res.json({ success: true, count: logs.length, logs });
+  });
+
+  app.post('/api/admin/saspay/logs/clear', (req, res) => {
+    clearSaspayOutgoingLogs();
+    res.json({ success: true, message: 'Logs Saspay réinitialisés avec succès.' });
+  });
+
+  // 6. Manual SASPAY.ME Configuration Endpoints (Admin Controlled)
+  app.get('/api/admin/saspay/config', (req, res) => {
+    try {
+      const pub = saspayConfigManager.getPublicConfig(req.get('host'));
+      res.json({ success: true, config: pub });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/admin/saspay/config', (req, res) => {
+    try {
+      const updated = saspayConfigManager.updateConfig(req.body, 'Administrateur');
+      db.logEvent('saas_settings_updated', undefined, {
+        action: 'SASPAY_MANUAL_CONFIG_UPDATED',
+        isActive: updated.isActive,
+        isConfigured: updated.isConfigured,
+        baseUrl: updated.baseUrl,
+        merchantId: updated.merchantId,
+        environment: updated.environment,
+      });
+      res.json({
+        success: true,
+        message: 'Configuration SASPAY.ME enregistrée avec succès.',
+        config: updated,
+      });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/admin/saspay/test', async (req, res) => {
+    try {
+      const result = await saspayConfigManager.testConnection(req.body);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        latencyMs: 0,
+        message: err.message || 'Erreur lors du test de connexion SASPAY.ME',
+        error: 'TEST_FAILED',
+      });
+    }
   });
 
   // ---------------- AI MUSIC GENERATIONS ----------------
@@ -1203,7 +1266,8 @@ async function startServer() {
     const vipUsers = Array.from(db.users.values()).filter((u) => u.is_vip).length;
 
     // SaaS MRR approximation (active paying clients average)
-    const mrr = totalRevenue > 0 ? Math.round(totalRevenue * 1.35) : 180;
+    const isMRRCleared = db.isTestMRRCleared;
+    const mrr = isMRRCleared ? 0 : (totalRevenue > 0 ? Math.round(totalRevenue * 1.35) : 0);
 
     res.json({
       totalUsers,
@@ -1313,6 +1377,11 @@ async function startServer() {
     });
   });
 
+  app.post('/api/admin/mrr/clear-test', (req, res) => {
+    const result = db.clearTestMRR();
+    res.json(result);
+  });
+
   app.get('/api/admin/songs', (req, res) => {
     res.json({ songs: Array.from(db.songs.values()) });
   });
@@ -1343,6 +1412,69 @@ async function startServer() {
     if (popular !== undefined) plan.popular = !!popular;
     db.updatePlan(req.params.id, plan);
     res.json({ plan });
+  });
+
+  // ---------------- DATABASE MANAGEMENT (SUPABASE) ----------------
+  app.get('/api/admin/database/status', async (req, res) => {
+    const status = db.getDatabaseStatus();
+    res.json(status);
+  });
+
+  app.post('/api/admin/database/disconnect', (req, res) => {
+    const result = db.disconnectDatabase();
+    res.json({
+      ...result,
+      status: db.getDatabaseStatus(),
+    });
+  });
+
+  app.post('/api/admin/database/connect', async (req, res) => {
+    const { url = 'https://pctngaoclnwpwouokwxc.supabase.co/rest/v1/', apiKey } = req.body;
+    const status = await db.connectDatabase(url, apiKey);
+    res.json({
+      success: true,
+      message: `Connecté à ${status.restUrl}`,
+      status,
+    });
+  });
+
+  app.post('/api/admin/database/test', async (req, res) => {
+    const result = await supabaseService.testConnection();
+    res.json(result);
+  });
+
+  app.post('/api/admin/database/sync', async (req, res) => {
+    const songs = Array.from(db.songs.values());
+    const users = Array.from(db.users.values());
+    const payments = Array.from(new Map(Array.from(db.payments.values()).map((p) => [p.id, p])).values());
+
+    let syncedSongs = 0;
+    let syncedUsers = 0;
+    let syncedPayments = 0;
+
+    for (const song of songs) {
+      if (await supabaseService.syncSong(song)) syncedSongs++;
+    }
+    for (const user of users) {
+      if (await supabaseService.syncUser(user)) syncedUsers++;
+    }
+    for (const payment of payments) {
+      if (await supabaseService.syncPayment(payment)) syncedPayments++;
+    }
+
+    res.json({
+      success: true,
+      message: 'Synchronisation vers Supabase effectuée.',
+      synced: {
+        songs: syncedSongs,
+        totalSongs: songs.length,
+        users: syncedUsers,
+        totalUsers: users.length,
+        payments: syncedPayments,
+        totalPayments: payments.length,
+      },
+      databaseStatus: db.getDatabaseStatus(),
+    });
   });
 
   // ---------------- VITE MIDDLEWARE / STATIC FILES ----------------

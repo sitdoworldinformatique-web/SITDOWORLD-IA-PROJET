@@ -24,10 +24,11 @@ import { SaaSPlansTab } from '../components/admin/SaaSPlansTab';
 import { SaaSAIAndAuditTab } from '../components/admin/SaaSAIAndAuditTab';
 import { SaaSAISettingsTab } from '../components/admin/SaaSAISettingsTab';
 import { SaaSSongsTab } from '../components/admin/SaaSSongsTab';
+import { SaspayConfigTab } from '../components/admin/SaspayConfigTab';
 
 export const AdminView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'ai_settings' | 'settings' | 'songs' | 'users' | 'plans' | 'billing' | 'ai_logs'
+    'overview' | 'saspay_config' | 'ai_settings' | 'settings' | 'songs' | 'users' | 'plans' | 'billing' | 'ai_logs'
   >('overview');
 
   const [stats, setStats] = useState<any | null>(null);
@@ -234,6 +235,23 @@ export const AdminView: React.FC = () => {
     }
   };
 
+  const handleClearTestMRR = async (): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/admin/mrr/clear-test', {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Échec suppression MRR test');
+      await fetchData();
+      setToastMessage(data.message || 'Chiffre MRR test supprimé avec succès. MRR réinitialisé à $0.');
+      setTimeout(() => setToastMessage(null), 4000);
+      return true;
+    } catch (err: any) {
+      alert(`Erreur: ${err.message}`);
+      return false;
+    }
+  };
+
   const handleExportReport = () => {
     const reportData = {
       appName: saasSettings?.general.appName || 'SITDOWORLD AI MUSIC',
@@ -345,6 +363,7 @@ export const AdminView: React.FC = () => {
       <div className="flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-slate-200">
         {[
           { id: 'overview', label: "Vue d'Ensemble", icon: TrendingUp },
+          { id: 'saspay_config', label: 'Configuration SASPAY.ME', icon: DollarSign },
           { id: 'ai_settings', label: 'Fournisseurs & Clés IA', icon: Cpu },
           { id: 'settings', label: 'Paramètres du SaaS', icon: Sliders },
           { id: 'songs', label: 'Chansons du SaaS', icon: Music },
@@ -381,9 +400,13 @@ export const AdminView: React.FC = () => {
           onNavigateTab={(tab) => setActiveTab(tab as any)}
           onRefresh={fetchData}
           onClearTestRevenue={handleClearTestPayments}
+          onClearTestMRR={handleClearTestMRR}
           onClearTestSongs={handleClearTestSongs}
         />
       )}
+
+      {/* TAB SASPAY CONFIG */}
+      {activeTab === 'saspay_config' && <SaspayConfigTab />}
 
       {/* TAB AI SETTINGS */}
       {activeTab === 'ai_settings' && <SaaSAISettingsTab />}
