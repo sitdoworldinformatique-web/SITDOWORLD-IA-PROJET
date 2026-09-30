@@ -497,29 +497,35 @@ export class SaspayService {
       );
     }
 
+    const isTestOrSandbox = cfg.environment === 'sandbox' || process.env.NODE_ENV !== 'production';
+
     if (!this.secretKey && !this.apiKey) {
-      throw new Error(
-        "La passerelle SASPAY.ME n'est pas configurée. Saisissez votre Clé API et Clé Secrète dans l'interface d'administration (onglet Configuration SASPAY.ME)."
-      );
+      if (isTestOrSandbox) {
+        console.log(`[SASPAY] Mode Sandbox/Test actif sans clé live : initialisation sécurisée de la transaction.`);
+      } else {
+        throw new Error(
+          "La passerelle SASPAY.ME n'est pas configurée. Saisissez votre Clé API et Clé Secrète dans l'interface d'administration (onglet Configuration SASPAY.ME)."
+        );
+      }
     }
 
     const routing = this.resolveRouting(params.customerPhone, params.paymentMethod);
     const maskedPhone = maskPhoneNumber(routing.cleanPhone);
 
-    // Anti-flood rate limiting: protect telecom operator SMS/USSD gates (allow 1 push every 3 seconds per number)
+    // Anti-flood throttle: max 1 request every 1.5s per phone number to prevent operator push collisions
     const cleanPhone = routing.cleanPhone;
     const lastRequestTime = this.recentRequestsByPhone.get(cleanPhone) || 0;
-    if (t0 - lastRequestTime < 3000) {
-      const waitSec = Math.ceil((3000 - (t0 - lastRequestTime)) / 1000);
+    if (t0 - lastRequestTime < 1500) {
+      const waitSec = Math.ceil((1500 - (t0 - lastRequestTime)) / 1000);
       throw new Error(
-        `Veuillez patienter ${waitSec}s avant de demander un nouvel envoi de confirmation pour ce numéro.`
+        `Veuillez patienter ${waitSec}s avant de renouveler la demande pour ce numéro.`
       );
     }
     this.recentRequestsByPhone.set(cleanPhone, t0);
 
     const reference = this.generateReference(plan.id);
 
-    // Initial local payment record in INITIATING state (instant in-memory save < 1ms)
+    // Initial local payment record in PENDING state (instant in-memory save < 1ms)
     const payment: Payment = {
       id: `pay-${Date.now()}`,
       user_id: params.userId,
@@ -530,7 +536,7 @@ export class SaspayService {
       transaction_reference: reference,
       amount: plan.price,
       currency: plan.currency,
-      status: 'INITIATING',
+      status: 'PENDING',
       phone_number: routing.cleanPhone,
       customer_phone: routing.cleanPhone,
       payment_method: params.paymentMethod || routing.network,
@@ -547,19 +553,21 @@ export class SaspayService {
     db.savePayment(payment);
 
     let providerInitiated = false;
-    let finalStatus: PaymentStatus = 'PENDING_CUSTOMER_CONFIRMATION';
+    let finalStatus: PaymentStatus = 'PENDING';
     let providerId: string | undefined = undefined;
     let checkoutUrl = '';
-    let instructions: string[] = [];
+    let instructions: string[] = [
+      'Une demande de paiement Mobile Money a été transmise à votre téléphone.',
+      'Saisissez votre code PIN secret sur votre mobile pour valider le débit.',
+    ];
     let isDirectPush = true;
     let sessionType: 'softpay' | 'checkout_session' = 'softpay';
 
     let t1 = Date.now();
     let t2 = Date.now();
 
-    // 1. DIRECT PUSH VIA SOFTPAY (POST /payments/softpay/)
-    // Dispatched immediately for mobile networks without unnecessary sequential pre-checks
-    if (routing.preferredChannel === 'softpay') {
+    // Direct push via SASPAY softpay / direct push endpoint
+    if (routing.preferredChannel === 'softpay' && (this.secretKey || this.apiKey)) {
       const endpoint = `${this.baseUrl}/payments/softpay/`;
       t1 = Date.now();
       const t1Iso = new Date(t1).toISOString();
@@ -587,19 +595,20 @@ export class SaspayService {
           plan_id: plan.id,
           user_id: params.userId,
         },
-        return_url: params.returnUrl || `${process.env.APP_URL || ''}/pricing`,
+        return_url: params.returnUrl || `${process.env.APP_URL || ''}/tarifs`,
       };
 
       try {
         const res = await saspayFetch(endpoint, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${this.secretKey}`,
+            'Authorization': `Bearer ${this.secretKey || this.apiKey}`,
             'Content-Type': 'application/json',
+            'Connection': 'keep-alive',
             'Idempotency-Key': idempotencyKey,
           },
           body: JSON.stringify(softpayPayload),
-          signal: AbortSignal.timeout(9000), // Optimal 9s window for carrier push handshake
+          signal: AbortSignal.timeout(5500), // Fast 5.5s timeout for direct operator push
           label: 'softpay_direct_push',
           transactionReference: reference,
         });
@@ -625,17 +634,17 @@ export class SaspayService {
             'Saisissez votre code secret Mobile Money (PIN) pour approuver le règlement.',
           ];
           isDirectPush = !checkoutUrl;
-          finalStatus = isDirectPush ? 'PENDING_CUSTOMER_CONFIRMATION' : 'CHECKOUT_REQUIRED';
+          finalStatus = 'PENDING';
         } else {
           const errCode = data?.error?.code || '';
           const errMsg = data?.error?.message || data?.message || `HTTP ${res.status}`;
           console.log(
-            `[PAYMENT] Softpay direct push returned ${res.status} (${errCode}: ${errMsg}). Fast failover to hosted checkout...`
+            `[PAYMENT] Softpay direct push returned ${res.status} (${errCode}: ${errMsg}). Failover to hosted checkout...`
           );
         }
       } catch (err: any) {
         t2 = Date.now();
-        console.log(`[PAYMENT] Softpay attempt failed or timed out (${err.message}). Immediate failover to hosted checkout...`);
+        console.log(`[PAYMENT] Softpay attempt failed or timed out (${err.message}). Failover to hosted checkout...`);
       }
     }
 
@@ -658,7 +667,7 @@ export class SaspayService {
         customer_email: params.customerEmail || 'sitdoworldinformatique@gmail.com',
         customer_name: 'Client SITDOWORLD',
         customer_phone: routing.cleanPhone,
-        return_url: params.returnUrl || `${process.env.APP_URL || ''}/pricing`,
+        return_url: params.returnUrl || `${process.env.APP_URL || ''}/tarifs`,
         metadata: {
           merchant_reference: reference,
           plan_id: plan.id,
@@ -674,11 +683,12 @@ export class SaspayService {
         const res = await saspayFetch(sessionEndpoint, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${this.secretKey}`,
+            'Authorization': `Bearer ${this.secretKey || this.apiKey}`,
             'Content-Type': 'application/json',
+            'Connection': 'keep-alive',
           },
           body: JSON.stringify(sessionPayload),
-          signal: AbortSignal.timeout(7500),
+          signal: AbortSignal.timeout(6000),
           label: 'checkout_session_initiation',
           transactionReference: reference,
         });
@@ -698,7 +708,7 @@ export class SaspayService {
           providerInitiated = true;
           providerId = data.data?.id;
           checkoutUrl = data.data?.checkout_url || '';
-          finalStatus = 'CHECKOUT_REQUIRED';
+          finalStatus = 'PENDING';
           isDirectPush = false;
           instructions = [
             'Une session sécurisée SASPAY.ME a été préparée pour votre opérateur.',
@@ -722,12 +732,12 @@ export class SaspayService {
       }
     }
 
-    // Success state update in local DB
+    // Success state update in local DB - strictly PENDING
     payment.provider_transaction_id = providerId;
     payment.session_type = sessionType;
     payment.checkout_url = checkoutUrl;
     payment.instructions = instructions;
-    payment.status = finalStatus;
+    payment.status = 'PENDING';
     payment.updated_at = new Date().toISOString();
     db.savePayment(payment);
 
@@ -768,14 +778,12 @@ export class SaspayService {
       currency: plan.currency,
       songs: plan.songs,
       planName: plan.name,
-      status: finalStatus,
+      status: 'PENDING',
       instructions,
       network: routing.network,
       country: routing.country,
       requires_redirect: !isDirectPush,
-      message: isDirectPush
-        ? 'Demande de paiement envoyée instantanément. Vérifiez votre téléphone Mobile Money et saisissez votre PIN pour confirmer.'
-        : 'Session sécurisée prête. Ouvrez le guichet de validation pour confirmer votre paiement.',
+      message: 'Demande de paiement envoyée instantanément. En attente de confirmation sur votre téléphone...',
       payment: { ...payment },
       timings: {
         t0_request_received: t0Iso,
@@ -813,7 +821,7 @@ export class SaspayService {
     }
 
     let attempts = 0;
-    const maxAttempts = 25; // 25 * 6s = 150 seconds (2.5 minutes)
+    const maxAttempts = 35; // 35 * 3.5s = ~120 seconds (2 minutes standard window)
 
     const timer = setInterval(async () => {
       attempts += 1;
@@ -841,7 +849,7 @@ export class SaspayService {
       } catch (e: any) {
         console.log(`[PAYMENT_STATUS_CHECK] Error in background poller: ${e.message}`);
       }
-    }, 6000);
+    }, 3500);
 
     this.activePollers.set(reference, timer);
   }

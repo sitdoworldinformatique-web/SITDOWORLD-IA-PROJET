@@ -501,18 +501,18 @@ export const SaaSSettingsTab: React.FC<SaaSSettingsTabProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                Chansons Offertes à l'Inscription
+                Chansons Gratuites à l'Inscription
               </label>
               <input
                 type="number"
                 min="0"
-                max="10"
-                value={formData.billing.welcomeFreeSongs}
-                onChange={(e) => updateBilling('welcomeFreeSongs', Number(e.target.value))}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                max="0"
+                disabled
+                value={0}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-100 border border-slate-200 text-xs font-bold text-slate-500 cursor-not-allowed"
               />
-              <span className="text-[10px] text-slate-400 mt-1 block">
-                Crédit initial gratuit pour tester la plateforme.
+              <span className="text-[10px] text-emerald-600 font-bold mt-1 block">
+                Strictement 0. Achat préalable d'un pack obligatoire.
               </span>
             </div>
 
@@ -682,10 +682,10 @@ export const SaaSSettingsTab: React.FC<SaaSSettingsTabProps> = ({
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-center justify-between gap-4">
               <div>
                 <span className="text-xs font-extrabold text-slate-900 block">
-                  Filigrane Audio Audio Watermark (Comptes Free)
+                  Filigrane Audio / Audio Watermark
                 </span>
                 <span className="text-[11px] text-slate-500">
-                  Insère discrètement « SITDOWORLD AI » au début des exports gratuits.
+                  Insère un identifiant sonore « SITDOWORLD AI » sur les pré-écoutes audio.
                 </span>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">

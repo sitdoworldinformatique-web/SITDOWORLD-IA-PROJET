@@ -5,9 +5,6 @@ import {
   Lock,
   Mail,
   User as UserIcon,
-  CheckCircle2,
-  ArrowRight,
-  Headphones,
   SlidersHorizontal,
   Flame,
   ShieldCheck,
@@ -17,13 +14,11 @@ import { User, UserSongBalance } from '../types';
 
 interface AuthViewProps {
   onAuthSuccess: (user: User, balance: UserSongBalance) => void;
-  onExploreAsGuest: () => void;
   initialMode?: 'login' | 'register';
 }
 
 export const AuthView: React.FC<AuthViewProps> = ({
   onAuthSuccess,
-  onExploreAsGuest,
   initialMode = 'register',
 }) => {
   const [isRegister, setIsRegister] = useState(initialMode === 'register');
@@ -63,13 +58,13 @@ export const AuthView: React.FC<AuthViewProps> = ({
 
       onAuthSuccess(data.user, data.balance);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Impossible de se connecter. Veuillez réessayer.');
+      setErrorMsg(err.message || 'Impossible de se connecter. Veuillez vérifier vos identifiants.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleQuickLogin = async (demoEmail: string, demoName: string) => {
+  const handleQuickLogin = async (demoEmail: string) => {
     setLoading(true);
     setErrorMsg(null);
     try {
@@ -79,7 +74,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
         body: JSON.stringify({ email: demoEmail }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erreur');
+      if (!res.ok) throw new Error(data.error || 'Erreur de connexion');
 
       localStorage.setItem('sitdoworld_logged_in', 'true');
       localStorage.setItem('sitdoworld_user_id', data.user.id);
@@ -92,13 +87,13 @@ export const AuthView: React.FC<AuthViewProps> = ({
   };
 
   return (
-    <div className="min-h-[calc(100vh-5rem)] flex items-center justify-center py-8 px-4 sm:px-6">
+    <div className="min-h-[calc(100vh-6rem)] flex items-center justify-center py-10 px-4 sm:px-6">
       <div className="max-w-5xl w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
         {/* Left Column: Visual Presentation & Benefits */}
         <div className="lg:col-span-6 space-y-6">
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-100 text-[#FF7A00] text-xs font-black shadow-xs">
             <Sparkles className="w-4 h-4 text-[#FF7A00]" />
-            <span>STUDIO DE PRODUCTION IA MUSICALE</span>
+            <span>PORTAIL D'ACCÈS EXCLUSIF CRÉATEURS</span>
           </div>
 
           <div className="space-y-3">
@@ -107,7 +102,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
               <span className="text-[#2563EB]">AI MUSIC</span>.
             </h1>
             <p className="text-sm sm:text-base text-[#64748B] leading-relaxed">
-              Créez, arrangez et exportez vos chansons complètes en haute fidélité grâce au studio IA numéro 1 pour les créateurs.
+              Connectez-vous ou créez votre compte pour accéder à votre espace de composition IA, écouter vos projets et commander vos packs de chansons.
             </p>
           </div>
 
@@ -119,10 +114,10 @@ export const AuthView: React.FC<AuthViewProps> = ({
               </div>
               <div>
                 <h4 className="font-extrabold text-sm text-[#0F172A]">
-                  2 Chansons Offertes dès l’inscription
+                  Packs de Chansons à la Carte
                 </h4>
                 <p className="text-xs text-[#64748B]">
-                  Testez immédiatement la génération d'un morceau complet sans carte bancaire obligatoire.
+                  Achetez uniquement les chansons dont vous avez besoin. Vos crédits n'expirent jamais.
                 </p>
               </div>
             </div>
@@ -136,7 +131,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
                   Studio Multitrack & Stems Séparés
                 </h4>
                 <p className="text-xs text-[#64748B]">
-                  Exportez les pistes voix (vocals), batterie (drums), basse et synthétiseur en qualité WAV master.
+                  Exportez les pistes voix, drums, basse et instru avec droits commerciaux d'exploitation complets.
                 </p>
               </div>
             </div>
@@ -147,25 +142,13 @@ export const AuthView: React.FC<AuthViewProps> = ({
               </div>
               <div>
                 <h4 className="font-extrabold text-sm text-[#0F172A]">
-                  Paiement Mobile Money SASPAY.ME
+                  Paiement Mobile Money Direct SASPAY.ME
                 </h4>
                 <p className="text-xs text-[#64748B]">
-                  Paiement à la demande sans abonnement forcé via Orange Money, MTN, Wave et Vodacom M-Pesa.
+                  Paiement rapide via Orange Money, MTN MoMo, Wave, Vodacom M-Pesa et Carte bancaire.
                 </p>
               </div>
             </div>
-          </div>
-
-          {/* Guest Link */}
-          <div className="pt-2">
-            <button
-              type="button"
-              onClick={onExploreAsGuest}
-              className="inline-flex items-center gap-2 text-xs font-bold text-[#2563EB] hover:text-blue-700 hover:underline cursor-pointer"
-            >
-              <span>Continuer d'abord en mode visiteur pour explorer le site</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
           </div>
         </div>
 
@@ -209,12 +192,12 @@ export const AuthView: React.FC<AuthViewProps> = ({
             {/* Header info */}
             <div className="mb-6">
               <h2 className="text-2xl font-black text-[#0F172A]">
-                {isRegister ? 'Inscription Créateur Studio' : 'Connexion à votre Studio'}
+                {isRegister ? 'Inscription Créateur Studio' : 'Connexion à votre Compte'}
               </h2>
               <p className="text-xs text-[#64748B] mt-1">
                 {isRegister
-                  ? 'Rejoignez SITDOWORLD AI MUSIC et recevez 2 chansons complètes gratuites.'
-                  : 'Retrouvez votre bibliothèque, vos créations audio et vos crédits de morceaux.'}
+                  ? 'Créez votre profil pour accéder à la plateforme SITDOWORLD IA MUSIC.'
+                  : 'Saisissez vos identifiants pour accéder à votre espace de travail.'}
               </p>
             </div>
 
@@ -222,14 +205,6 @@ export const AuthView: React.FC<AuthViewProps> = ({
             {errorMsg && (
               <div className="p-3.5 mb-5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold animate-in fade-in">
                 {errorMsg}
-              </div>
-            )}
-
-            {/* Gift banner for register */}
-            {isRegister && (
-              <div className="p-3 mb-5 rounded-2xl bg-orange-50 border border-orange-200 text-[#FF7A00] text-xs font-bold flex items-center gap-2">
-                <Sparkles className="w-4 h-4 shrink-0" />
-                <span>🎁 Cadeau de bienvenue : 2 chansons gratuites créditées dès validation !</span>
               </div>
             )}
 
@@ -303,26 +278,26 @@ export const AuthView: React.FC<AuthViewProps> = ({
                 ) : isRegister ? (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    <span>Créer mon compte et recevoir mes 2 chansons</span>
+                    <span>Créer mon compte Créateur</span>
                   </>
                 ) : (
                   <>
-                    <Headphones className="w-4 h-4" />
+                    <Music className="w-4 h-4" />
                     <span>Se connecter au Studio</span>
                   </>
                 )}
               </button>
             </form>
 
-            {/* Quick Demo Logins for fast review */}
+            {/* Quick Demo Logins for fast test */}
             <div className="mt-6 pt-5 border-t border-slate-100 space-y-2">
               <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">
-                Accès Rapide en 1 Clic (Comptes de Test)
+                Connexion Rapide (Comptes de Test)
               </p>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => handleQuickLogin('creator@sitdoworld.com', 'Créateur Studio')}
+                  onClick={() => handleQuickLogin('creator@sitdoworld.com')}
                   className="p-2.5 rounded-xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 text-[11px] font-bold text-slate-700 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                 >
                   <Music className="w-3.5 h-3.5 text-[#2563EB]" />
@@ -330,7 +305,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleQuickLogin('sitdoworldinformatique@gmail.com', 'Administrateur')}
+                  onClick={() => handleQuickLogin('sitdoworldinformatique@gmail.com')}
                   className="p-2.5 rounded-xl border border-slate-200 hover:border-orange-400 hover:bg-orange-50/50 text-[11px] font-bold text-slate-700 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                 >
                   <ShieldCheck className="w-3.5 h-3.5 text-[#FF7A00]" />

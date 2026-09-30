@@ -16,7 +16,7 @@ interface DiscoverViewProps {
   currentSong: Song | null;
   isPlaying: boolean;
   onPlaySong: (song: Song) => void;
-  onOpenStudio: (song: Song) => void;
+  onOpenStudio?: (song: Song) => void;
   onRemixSong?: (song: Song) => void;
 }
 

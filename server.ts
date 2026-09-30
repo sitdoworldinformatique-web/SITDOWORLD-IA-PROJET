@@ -270,18 +270,46 @@ async function startServer() {
         key,
         idempotency_key,
       } = req.body;
-      const targetUserId = userId || 'user-default-1';
+      const targetUserId = userId || (req.headers['x-user-id'] as string) || (req.query.userId as string);
+
+      if (!targetUserId || targetUserId === 'anonymous' || !db.users.has(targetUserId)) {
+        return res.status(401).json({
+          error: 'Vous devez être connecté avec un compte pour créer une chanson.',
+          code: 'UNAUTHENTICATED',
+        });
+      }
 
       if (!prompt || !prompt.trim()) {
         return res.status(400).json({ error: 'Un prompt descriptif est requis pour générer une chanson.' });
       }
 
-      // Verify balance
+      // Strict Pack & Credit Verification (Section 2 & 3: No pack -> No generation)
       const balance = db.getBalance(targetUserId);
+      const hasActivePack = db.hasActivePack(targetUserId);
+
+      if (!hasActivePack) {
+        if (balance.total_purchased > 0) {
+          return res.status(403).json({
+            error: 'Vous avez utilisé toutes les chansons disponibles dans votre pack. Veuillez acheter un nouveau pack pour continuer.',
+            code: 'PACK_EXHAUSTED',
+            available_songs: 0,
+            has_active_pack: false,
+          });
+        }
+        return res.status(403).json({
+          error: 'Vous devez acheter un pack de chansons pour utiliser le générateur.',
+          code: 'NO_ACTIVE_PACK',
+          available_songs: 0,
+          has_active_pack: false,
+        });
+      }
+
       if (balance.available_songs <= 0) {
         return res.status(403).json({
-          error: 'Solde insuffisant. Veuillez recharger votre compte avec un pack.',
+          error: 'Vous avez utilisé toutes les chansons disponibles dans votre pack. Veuillez acheter un nouveau pack pour continuer.',
+          code: 'PACK_EXHAUSTED',
           available_songs: 0,
+          has_active_pack: false,
         });
       }
 
@@ -602,80 +630,13 @@ async function startServer() {
     }
   });
 
-  // Dedicated Endpoint: TEST GENERATION (Style: Afrobeat, Langue: Français, Thème: Amour, Voix: Chantée)
-  // Direct SunoAPI (Suno v6) engine test
-  app.post('/api/music/test-generation', async (req, res) => {
-    const start = Date.now();
-    try {
-      if (!sunorMusicProvider.isConfigured()) {
-        return res.status(400).json({
-          success: false,
-          sunoStatus: 'NOT_CONFIGURED',
-          audioGeneration: 'FAILED',
-          mp3Output: 'FAILED',
-          error: 'SUNO_API_KEY ou SUNOR_API_KEY non configurée dans l’environnement serveur.',
-        });
-      }
-
-      // Generate real vocal song via Suno v6 (Section 17 test specification)
-      const sunoResult = await sunorMusicProvider.generateSong({
-        prompt:
-          'Crée une chanson afrobeat romantique en français sur une personne qui déclare son amour à son partenaire. Je veux une vraie chanson chantée avec des paroles complètes, un refrain mémorable, deux couplets, un bridge et une outro.',
-        style: 'Afrobeat',
-        mood: 'Romantique & Entraînant',
-        language: 'Français',
-        voice: 'male',
-        duration: 180,
-      });
-
-      const testSong = {
-        id: `song-${Date.now()}`,
-        title: sunoResult.title || 'Lydia, Femme de mon cœur',
-        creator_id: 'user-default-1',
-        creator_name: 'Studio Test',
-        genre: 'Afrobeat' as const,
-        mood: 'Romantique',
-        bpm: sunoResult.bpm || 108,
-        key: sunoResult.key || 'F# Minor',
-        duration: sunoResult.duration || 180,
-        audio_url: sunoResult.audioUrl,
-        cover_url: 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?auto=format&fit=crop&w=600&q=80',
-        lyrics: sunoResult.lyrics || '[Intro]\nPour toi Lydia...\n\n[Couplet]\nDans tes yeux tout s’éclaire...',
-        prompt: 'Style : Afrobeat | Langue : Français | Thème : Amour pour Lydia | Voix : Chantée',
-        plays_count: 1,
-        likes_count: 0,
-        shares_count: 0,
-        is_public: true,
-        version_tag: 'ORIGINAL' as const,
-        model_version: 'suno-v6',
-        created_at: new Date().toISOString(),
-      };
-      db.songs.set(testSong.id, testSong);
-
-      return res.json({
-        success: true,
-        provider: 'SUNOAPI',
-        sunoStatus: 'AVAILABLE',
-        model: 'suno-v6',
-        audioGeneration: 'PASSED',
-        mp3Output: 'PASSED',
-        song: testSong,
-        audioUrl: sunoResult.audioUrl,
-        duration: sunoResult.duration,
-        latencyMs: Date.now() - start,
-      });
-    } catch (err: any) {
-      const rawError = err.message || 'Erreur lors du test de génération SunoAPI';
-      return res.status(500).json({
-        success: false,
-        provider: 'SUNOAPI',
-        sunoStatus: 'FAILED',
-        audioGeneration: 'FAILED',
-        mp3Output: 'FAILED',
-        error: rawError,
-        latencyMs: Date.now() - start,
-      });
-    }
+  // Strict rule: Free test generations are completely disabled
+  app.post('/api/music/test-generation', (req, res) => {
+    return res.status(403).json({
+      success: false,
+      error: 'Toute génération de test gratuite est désactivée. Un pack de chansons acheté est strictement obligatoire.',
+      code: 'FREE_GENERATION_FORBIDDEN',
+    });
   });
 
 
@@ -771,7 +732,7 @@ async function startServer() {
       created_at: new Date().toISOString(),
     };
     db.users.set(newUser.id, newUser);
-    // Give 2 free welcome songs
+    // Strict rule: 0 free songs. Commercial pack purchase strictly required to create songs.
     const balance = db.getBalance(newUser.id);
     res.json({ user: newUser, balance });
   });
@@ -976,18 +937,46 @@ async function startServer() {
         userId,
         idempotency_key,
       } = req.body;
-      const targetUserId = userId || 'user-default-1';
+      const targetUserId = userId || (req.headers['x-user-id'] as string) || (req.query.userId as string);
+
+      if (!targetUserId || targetUserId === 'anonymous' || !db.users.has(targetUserId)) {
+        return res.status(401).json({
+          error: 'Vous devez être connecté avec un compte pour créer une chanson.',
+          code: 'UNAUTHENTICATED',
+        });
+      }
 
       if (!prompt || !prompt.trim()) {
         return res.status(400).json({ error: 'Veuillez décrire la chanson que vous souhaitez créer.' });
       }
 
-      // Check balance first
+      // Check active confirmed pack & available songs (Section 2 & 3: No pack -> No generation)
       const balance = db.getBalance(targetUserId);
+      const hasActivePack = db.hasActivePack(targetUserId);
+
+      if (!hasActivePack) {
+        if (balance.total_purchased > 0) {
+          return res.status(403).json({
+            error: 'Vous avez utilisé toutes les chansons disponibles dans votre pack. Veuillez acheter un nouveau pack pour continuer.',
+            code: 'PACK_EXHAUSTED',
+            available_songs: 0,
+            has_active_pack: false,
+          });
+        }
+        return res.status(403).json({
+          error: 'Vous devez acheter un pack de chansons pour utiliser le générateur.',
+          code: 'NO_ACTIVE_PACK',
+          available_songs: 0,
+          has_active_pack: false,
+        });
+      }
+
       if (balance.available_songs <= 0) {
         return res.status(403).json({
-          error: 'Vous avez utilisé toutes vos chansons. Veuillez recharger votre compte avec un pack.',
+          error: 'Vous avez utilisé toutes les chansons disponibles dans votre pack. Veuillez acheter un nouveau pack pour continuer.',
+          code: 'PACK_EXHAUSTED',
           available_songs: 0,
+          has_active_pack: false,
         });
       }
 
@@ -1145,8 +1134,13 @@ async function startServer() {
       const { targetGenre, targetMood, userId } = req.body;
       const targetUserId = userId || 'user-default-1';
       const balance = db.getBalance(targetUserId);
-      if (balance.available_songs <= 0) {
-        return res.status(403).json({ error: 'Solde insuffisant pour créer un remix.' });
+      const hasActivePack = db.hasActivePack(targetUserId);
+
+      if (!hasActivePack || balance.available_songs <= 0) {
+        return res.status(403).json({
+          error: 'Vous devez acheter un pack de chansons pour créer un remix.',
+          code: 'NO_ACTIVE_PACK',
+        });
       }
 
       const { jobId } = await musicProvider.remixSong({
@@ -1168,8 +1162,13 @@ async function startServer() {
       const { extensionPrompt, userId } = req.body;
       const targetUserId = userId || 'user-default-1';
       const balance = db.getBalance(targetUserId);
-      if (balance.available_songs <= 0) {
-        return res.status(403).json({ error: 'Solde insuffisant pour étendre ce morceau.' });
+      const hasActivePack = db.hasActivePack(targetUserId);
+
+      if (!hasActivePack || balance.available_songs <= 0) {
+        return res.status(403).json({
+          error: 'Vous devez acheter un pack de chansons pour étendre ce morceau.',
+          code: 'NO_ACTIVE_PACK',
+        });
       }
 
       const { jobId } = await musicProvider.extendSong({

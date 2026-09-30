@@ -35,7 +35,7 @@ export const DEFAULT_SAAS_SETTINGS: SaaSSettings = {
     allowStemExtraction: true,
   },
   billing: {
-    welcomeFreeSongs: 2,
+    welcomeFreeSongs: 0, // STRICT: 0 free songs. Pack purchase strictly required.
     unitSongPriceUSD: 1.5,
     saspayGatewayActive: true,
     testMode: false,
@@ -728,31 +728,61 @@ class Database {
     return undefined;
   }
 
-  // Get user song balance safely
+  // Strict check: User has an active confirmed paid pack with remaining songs
+  public hasActivePack(userId: string): boolean {
+    if (!userId) return false;
+    const bal = this.songBalances.get(userId);
+    if (!bal || bal.total_purchased <= 0 || bal.available_songs <= 0) {
+      return false;
+    }
+    // Verify there is a confirmed/paid transaction or payment for this user
+    for (const p of this.payments.values()) {
+      const st = String(p.status || '').toUpperCase();
+      if (
+        p.user_id === userId &&
+        (st === 'CONFIRMED' || st === 'PAID' || st === 'SUCCESS') &&
+        (p.pack_credited || (p.songs_credited && p.songs_credited > 0))
+      ) {
+        return true;
+      }
+    }
+    // Also check transactions for confirmed purchase records
+    const hasPurchaseTx = this.transactions.some(
+      (tx) => tx.user_id === userId && tx.type === 'PURCHASE' && tx.amount > 0
+    );
+    return hasPurchaseTx;
+  }
+
+  // Get user song balance safely (0 free songs by default - strictly requires a purchased pack)
   public getBalance(userId: string): UserSongBalance {
     let bal = this.songBalances.get(userId);
     if (!bal) {
       bal = {
         id: `bal-${userId}`,
         user_id: userId,
-        available_songs: 2, // New sign-up welcome gift 2 songs
+        available_songs: 0, // STRICT: 0 free songs. A commercial pack purchase is strictly required.
         total_purchased: 0,
         total_generated: 0,
+        has_active_pack: false,
         updated_at: new Date().toISOString(),
       };
       this.songBalances.set(userId, bal);
+    } else {
+      bal.has_active_pack = this.hasActivePack(userId);
     }
     return bal;
   }
 
-  // Deduct song on validated generation
+  // Deduct song on validated generation - strictly guarded by pack check
   public deductSong(userId: string, songId: string, reference: string): boolean {
     const bal = this.getBalance(userId);
-    if (bal.available_songs <= 0) {
+    if (!this.hasActivePack(userId) || bal.available_songs <= 0) {
+      console.warn(`[CREDIT_DEDUCT_BLOCKED] userId=${userId} hasActivePack=${this.hasActivePack(userId)} available=${bal.available_songs}`);
       return false;
     }
-    bal.available_songs -= 1;
+    bal.available_songs = Math.max(0, bal.available_songs - 1);
     bal.total_generated += 1;
+    bal.has_active_pack = bal.total_purchased > 0 && bal.available_songs > 0;
     bal.updated_at = new Date().toISOString();
     this.songBalances.set(userId, bal);
 
@@ -770,6 +800,7 @@ class Database {
       reason: 'GENERATION',
       deducted: 1,
       available_songs: bal.available_songs,
+      has_active_pack: bal.has_active_pack,
       reference,
     });
 
@@ -780,12 +811,16 @@ class Database {
   public committedGenerations = new Set<string>();
   public releasedGenerations = new Set<string>();
 
-  // Reserve 1 song credit at the start of generation (Section 10)
+  // Reserve 1 song credit at the start of generation - strictly guarded
   public reserveSong(userId: string, jobId: string, reference: string): boolean {
     if (this.reservedGenerations.has(jobId)) return true;
     const bal = this.getBalance(userId);
-    if (bal.available_songs <= 0) return false;
-    bal.available_songs -= 1;
+    if (!this.hasActivePack(userId) || bal.available_songs <= 0) {
+      console.warn(`[CREDIT_RESERVE_BLOCKED] userId=${userId} hasActivePack=${this.hasActivePack(userId)} available=${bal.available_songs}`);
+      return false;
+    }
+    bal.available_songs = Math.max(0, bal.available_songs - 1);
+    bal.has_active_pack = bal.total_purchased > 0 && bal.available_songs > 0;
     bal.updated_at = new Date().toISOString();
     this.songBalances.set(userId, bal);
     this.reservedGenerations.add(jobId);
@@ -800,7 +835,7 @@ class Database {
       created_at: new Date().toISOString(),
     });
 
-    console.log(`[CREDIT_RESERVATION] generationId=${jobId} userId=${userId} timestamp=${new Date().toISOString()} status=RESERVED`);
+    console.log(`[CREDIT_RESERVATION] generationId=${jobId} userId=${userId} available_songs=${bal.available_songs} timestamp=${new Date().toISOString()} status=RESERVED`);
     return true;
   }
 

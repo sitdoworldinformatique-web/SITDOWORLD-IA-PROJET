@@ -20,7 +20,8 @@ import {
   ArrowRight,
   SlidersHorizontal,
 } from 'lucide-react';
-import { Song, GenerationJob, UserSongBalance, Genre } from '../types';
+import { Song, GenerationJob, UserSongBalance, Genre, Plan } from '../types';
+import { StudioLockedGate } from '../components/StudioLockedGate';
 
 interface CreateViewProps {
   balance: UserSongBalance | null;
@@ -32,6 +33,8 @@ interface CreateViewProps {
   navigate: (route: string) => void;
   prefillGenre?: string;
   prefillPrompt?: string;
+  plans?: Plan[];
+  onSelectPlan?: (plan: Plan) => void;
 }
 
 export const CreateView: React.FC<CreateViewProps> = ({
@@ -44,6 +47,8 @@ export const CreateView: React.FC<CreateViewProps> = ({
   navigate,
   prefillGenre,
   prefillPrompt,
+  plans = [],
+  onSelectPlan,
 }) => {
   // Mode selection
   const [isAdvanced, setIsAdvanced] = useState(false);
@@ -97,50 +102,6 @@ export const CreateView: React.FC<CreateViewProps> = ({
   const [isGeneratingLyrics, setIsGeneratingLyrics] = useState(false);
   const [geminiStatusNote, setGeminiStatusNote] = useState<string | null>(null);
 
-  // Dedicated Test Generation state (SunoAPI -> Suno v6 -> MP3)
-  const [isTestingGeneration, setIsTestingGeneration] = useState(false);
-  const [testResult, setTestResult] = useState<{
-    success: boolean;
-    provider?: string;
-    sunoStatus: string;
-    audioGeneration: string;
-    mp3Output: string;
-    error?: string;
-    song?: Song;
-    audioUrl?: string;
-    duration?: number;
-    latencyMs?: number;
-  } | null>(null);
-
-  const handleTestGeneration = async () => {
-    setIsTestingGeneration(true);
-    setTestResult(null);
-    setErrorMessage(null);
-    try {
-      const res = await fetch('/api/music/test-generation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      const data = await res.json();
-      setTestResult(data);
-      if (data.song) {
-        onGenerationFinished();
-        onPlaySong(data.song);
-      }
-    } catch (err: any) {
-      setTestResult({
-        success: false,
-        provider: 'SUNOAPI',
-        sunoStatus: 'FAILED',
-        audioGeneration: 'FAILED',
-        mp3Output: 'FAILED',
-        error: err.message || 'Échec du test de génération SunoAPI',
-      });
-    } finally {
-      setIsTestingGeneration(false);
-    }
-  };
-
 
   const handleEnhancePrompt = async () => {
     if (!prompt.trim()) return;
@@ -193,6 +154,19 @@ export const CreateView: React.FC<CreateViewProps> = ({
   };
 
   const availableSongs = balance?.available_songs ?? 0;
+  const hasActivePack = Boolean(balance?.has_active_pack && availableSongs > 0);
+
+  // Strictly enforce pack check: Users without active pack or with 0 songs cannot access the generator
+  if (!hasActivePack) {
+    return (
+      <StudioLockedGate
+        plans={plans}
+        onSelectPlan={onSelectPlan || ((p) => navigate('/pricing'))}
+        navigate={navigate}
+        reason={balance && balance.total_purchased > 0 && availableSongs <= 0 ? 'zero_remaining' : 'no_pack'}
+      />
+    );
+  }
 
   // Inspiration prompts
   const samplePrompts = [
@@ -251,8 +225,8 @@ export const CreateView: React.FC<CreateViewProps> = ({
 
     if (isSubmitting) return;
 
-    if (availableSongs <= 0) {
-      setErrorMessage('Vous avez utilisé toutes vos chansons. Achetez un pack pour continuer à créer.');
+    if (!balance?.has_active_pack || availableSongs <= 0) {
+      setErrorMessage('Vous devez acheter un pack de chansons pour utiliser le générateur.');
       return;
     }
 
@@ -316,9 +290,9 @@ export const CreateView: React.FC<CreateViewProps> = ({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200/80 pb-5">
         <div>
           <h1 className="text-3xl font-black text-[#0F172A] tracking-tight flex items-center gap-2.5">
-            <span>CREATE YOUR SONG</span>
+            <span>STUDIO DE CRÉATION</span>
             <span className="text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-orange-100 text-[#FF7A00]">
-              Studio IA
+              IA Music
             </span>
           </h1>
           <p className="text-sm text-[#64748B] mt-1">
@@ -326,30 +300,12 @@ export const CreateView: React.FC<CreateViewProps> = ({
           </p>
         </div>
 
-        {/* Mode Toggle & TEST GENERATION Action */}
-        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          <button
-            onClick={handleTestGeneration}
-            disabled={isTestingGeneration}
-            className="px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
-          >
-            {isTestingGeneration ? (
-              <>
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Test en cours...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>TEST GENERATION</span>
-              </>
-            )}
-          </button>
-
+        {/* Mode Toggle Action */}
+        <div className="flex items-center gap-2.5 shrink-0">
           <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
             <button
               onClick={() => setIsAdvanced(false)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                 !isAdvanced ? 'bg-white text-[#2563EB] shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -357,96 +313,16 @@ export const CreateView: React.FC<CreateViewProps> = ({
             </button>
             <button
               onClick={() => setIsAdvanced(true)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
                 isAdvanced ? 'bg-white text-[#FF7A00] shadow-xs' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span>Advanced Mode</span>
+              <span>Mode Avancé</span>
             </button>
           </div>
         </div>
       </div>
-
-      {/* TEST GENERATION STATUS & REAL TIME REPORT */}
-      {testResult && (
-        <div className={`p-5 rounded-2xl border transition-all ${
-          testResult.success
-            ? 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
-            : 'bg-amber-50/90 border-amber-200 text-amber-950'
-        }`}>
-          <div className="flex items-start justify-between gap-3 mb-3">
-            <div className="flex items-center gap-2.5">
-              {testResult.success ? (
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-              ) : (
-                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
-              )}
-              <h3 className="text-sm font-black uppercase tracking-wider">
-                RAPPORT OFFICIEL : TEST GÉNÉRATION (SUNO v6 → CHANSON MP3)
-              </h3>
-            </div>
-            <button
-              onClick={() => setTestResult(null)}
-              className="text-xs text-slate-400 hover:text-slate-600 font-bold px-2 py-0.5 rounded cursor-pointer"
-            >
-              ✕
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-semibold mb-3">
-            <div className="bg-white/80 p-2.5 rounded-xl border border-slate-200/60">
-              <span className="text-slate-500 block text-[10px] uppercase font-bold">MOTEUR SUNO</span>
-              <span className={testResult.sunoStatus === 'AVAILABLE' ? 'text-emerald-700 font-black' : 'text-red-600 font-black'}>
-                {testResult.sunoStatus}
-              </span>
-            </div>
-            <div className="bg-white/80 p-2.5 rounded-xl border border-slate-200/60">
-              <span className="text-slate-500 block text-[10px] uppercase font-bold">MODÈLE IA</span>
-              <span className="text-purple-700 font-black">
-                Suno v6
-              </span>
-            </div>
-            <div className="bg-white/80 p-2.5 rounded-xl border border-slate-200/60">
-              <span className="text-slate-500 block text-[10px] uppercase font-bold">AUDIO GÉNÉRATION</span>
-              <span className={testResult.audioGeneration === 'PASSED' ? 'text-emerald-700 font-black' : 'text-red-600 font-black'}>
-                {testResult.audioGeneration}
-              </span>
-            </div>
-            <div className="bg-white/80 p-2.5 rounded-xl border border-slate-200/60">
-              <span className="text-slate-500 block text-[10px] uppercase font-bold">FICHIER MP3</span>
-              <span className={testResult.mp3Output === 'PASSED' ? 'text-emerald-700 font-black' : 'text-red-600 font-black'}>
-                {testResult.mp3Output}
-              </span>
-            </div>
-          </div>
-
-          <div className="text-xs space-y-1 bg-white/60 p-3 rounded-xl border border-slate-200/60">
-            <p className="text-slate-700">
-              <strong>Paramètres testés :</strong> Style : Afrobeat | Langue : Français | Thème : Amour | Voix : Chantée
-            </p>
-            {testResult.error && (
-              <p className="text-red-700 font-medium break-words mt-1">
-                <strong>Erreur réelle retournée :</strong> {testResult.error}
-              </p>
-            )}
-            {testResult.song && (
-              <div className="mt-2 pt-2 border-t border-slate-200 flex items-center justify-between">
-                <span className="text-emerald-800 font-bold">
-                  Chanson créée : {testResult.song.title} ({testResult.song.duration}s)
-                </span>
-                <button
-                  onClick={() => onPlaySong(testResult.song!)}
-                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-xs flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Play className="w-3 h-3 fill-current" />
-                  <span>Écouter dans le lecteur</span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
 
       {/* BALANCE ALERTS (Section 28) */}

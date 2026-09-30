@@ -43,18 +43,30 @@ export const Header: React.FC<HeaderProps> = ({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const availableSongs = balance?.available_songs ?? 0;
+  const hasActivePack = Boolean(user && balance?.has_active_pack && availableSongs > 0);
 
-  const navItems = [
-    { label: 'Accueil', route: '/', icon: Music },
-    { label: 'Discover', route: '/discover', icon: Compass },
-    { label: 'Créer', route: '/create', icon: Sparkles },
-    { label: 'Ma musique', route: '/library', icon: Library },
-    { label: 'Playlists', route: '/playlists', icon: ListMusic },
-    { label: 'Studio', route: '/studio', icon: SlidersHorizontal },
-    { label: 'Voix', route: '/voices', icon: Mic },
-    { label: 'Templates', route: '/templates', icon: LayoutGrid },
-    { label: 'Tarifs', route: '/pricing', icon: CreditCard },
-  ];
+  // When user has an active pack, show full studio tools. When logged in without pack, show standard tools.
+  const navItems = !user
+    ? [
+        { label: 'Connexion / Inscription', route: '/auth', icon: UserIcon },
+      ]
+    : hasActivePack
+    ? [
+        { label: 'Accueil', route: '/', icon: Music },
+        { label: 'Découvrir', route: '/discover', icon: Compass },
+        { label: 'Studio Création', route: '/create', icon: Sparkles },
+        { label: 'Ma musique', route: '/library', icon: Library },
+        { label: 'Playlists', route: '/playlists', icon: ListMusic },
+        { label: 'Studio Multitrack', route: '/studio', icon: SlidersHorizontal },
+        { label: 'Voix', route: '/voices', icon: Mic },
+        { label: 'Templates', route: '/templates', icon: LayoutGrid },
+        { label: 'Tarifs', route: '/tarifs', icon: CreditCard },
+      ]
+    : [
+        { label: 'Accueil', route: '/', icon: Music },
+        { label: 'Découvrir', route: '/discover', icon: Compass },
+        { label: 'Tarifs & Packs', route: '/tarifs', icon: CreditCard },
+      ];
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-xs">
@@ -88,7 +100,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   key={item.route}
                   onClick={() => navigate(item.route)}
-                  className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-1.5 ${
+                  className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
                     isActive
                       ? 'text-[#2563EB] bg-[#EFF6FF]'
                       : 'text-[#0F172A] hover:text-[#2563EB] hover:bg-slate-50'
@@ -102,38 +114,38 @@ export const Header: React.FC<HeaderProps> = ({
           </nav>
         </div>
 
-        {/* Right Section: Balance, Notifs, Profile, +Créer */}
+        {/* Right Section: Balance, Notifs, Profile, CTA */}
         <div className="flex items-center gap-3">
-          {/* Song Balance Badge or Welcome Bonus */}
+          {/* Song Balance Badge (Only displayed when user has purchased credits) */}
           {user ? (
             <button
-              onClick={() => navigate('/pricing')}
+              onClick={() => navigate('/tarifs')}
               title="Cliquez pour voir les packs ou recharger vos crédits de chansons"
               id="header-balance-badge"
               className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 border transition-all cursor-pointer ${
                 availableSongs === 0
-                  ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
-                  : availableSongs === 1
                   ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
                   : 'bg-[#EFF6FF] text-[#2563EB] border-blue-200 hover:bg-blue-100'
               }`}
             >
-              <span className="w-2 h-2 rounded-full bg-[#FF7A00] animate-pulse"></span>
+              <span className={`w-2 h-2 rounded-full ${availableSongs > 0 ? 'bg-[#FF7A00] animate-pulse' : 'bg-slate-400'}`}></span>
               <span>
                 {availableSongs} {availableSongs > 1 ? 'chansons' : 'chanson'} restante{availableSongs > 1 ? 's' : ''}
               </span>
-              {availableSongs <= 1 && (
-                <AlertCircle className="w-3.5 h-3.5 text-[#FF7A00]" />
+              {availableSongs === 0 && (
+                <span className="text-[10px] font-black uppercase text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-sm">
+                  Pack requis
+                </span>
               )}
             </button>
           ) : (
             <button
               onClick={() => navigate('/auth')}
-              className="px-3 py-1.5 rounded-full text-xs font-extrabold flex items-center gap-1.5 bg-orange-50 text-[#FF7A00] border border-orange-200 hover:bg-orange-100 transition-colors cursor-pointer"
-              title="Créer un compte pour recevoir 2 chansons gratuites"
+              className="px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 bg-blue-50 text-[#2563EB] border border-blue-200 hover:bg-blue-100 transition-colors cursor-pointer"
+              title="Se connecter"
             >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>2 Chansons Offertes</span>
+              <UserIcon className="w-3.5 h-3.5" />
+              <span>Connexion</span>
             </button>
           )}
 
@@ -254,15 +266,26 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
-          {/* Primary Action Button: + CRÉER (Orange #FF7A00 as strictly required) */}
-          <button
-            onClick={() => navigate('/create')}
-            id="header-create-btn"
-            className="px-5 py-2.5 rounded-xl bg-[#FF7A00] hover:bg-[#e66e00] text-white font-extrabold text-sm tracking-wide shadow-md shadow-orange-500/25 active:scale-98 transition-all flex items-center gap-2 shrink-0 cursor-pointer"
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>+ CRÉER</span>
-          </button>
+          {/* Primary Action Button: + CRÉER if hasActivePack, else Acheter un Pack */}
+          {hasActivePack ? (
+            <button
+              onClick={() => navigate('/create')}
+              id="header-create-btn"
+              className="px-5 py-2.5 rounded-xl bg-[#FF7A00] hover:bg-[#e66e00] text-white font-extrabold text-sm tracking-wide shadow-md shadow-orange-500/25 active:scale-98 transition-all flex items-center gap-2 shrink-0 cursor-pointer"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>+ CRÉER</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => navigate(user ? '/tarifs' : '/auth')}
+              id="header-buy-pack-btn"
+              className="px-5 py-2.5 rounded-xl bg-[#FF7A00] hover:bg-[#e66e00] text-white font-extrabold text-sm tracking-wide shadow-md shadow-orange-500/25 active:scale-98 transition-all flex items-center gap-2 shrink-0 cursor-pointer"
+            >
+              <CreditCard className="w-4 h-4" />
+              <span>Acheter un Pack</span>
+            </button>
+          )}
 
           {/* Mobile menu toggle */}
           <button

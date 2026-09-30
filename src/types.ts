@@ -98,6 +98,8 @@ export interface UserSongBalance {
   available_songs: number;
   total_purchased: number;
   total_generated: number;
+  has_active_pack?: boolean;
+  active_plan_id?: string;
   updated_at: string;
 }
 

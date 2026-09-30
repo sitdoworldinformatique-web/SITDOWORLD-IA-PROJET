@@ -64,7 +64,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
           </h3>
           <p className="text-xs text-[#64748B] mt-1">
             {isRegister
-              ? 'Inscrivez-vous pour obtenir 2 chansons gratuites d’accueil.'
+              ? 'Créez votre compte pour choisir vos packs et gérer vos morceaux.'
               : 'Accédez à votre bibliothèque et vos stems audio.'}
           </p>
         </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header';
 import { GlobalAudioPlayer } from './components/GlobalAudioPlayer';
 import { AuthModal } from './components/AuthModal';
@@ -16,6 +16,7 @@ import { PricingView } from './views/PricingView';
 import { PaymentView } from './views/PaymentView';
 import { ProfileView } from './views/ProfileView';
 import { AdminView } from './views/AdminView';
+import { StudioLockedGate } from './components/StudioLockedGate';
 
 import { User, UserSongBalance, Song, Playlist, Plan, PromptTemplate, VoiceProfile } from './types';
 
@@ -62,8 +63,13 @@ export function App() {
         setUser(data.user);
         if (data.balance) setBalance(data.balance);
       } else {
+        // If server says no user, wipe local credentials
         setUser(null);
         setBalance(null);
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('sitdoworld_logged_in');
+          localStorage.removeItem('sitdoworld_user_id');
+        }
       }
     } catch (e) {
       console.error(e);
@@ -110,6 +116,35 @@ export function App() {
     fetchAllData();
   }, []);
 
+  // Strict route protection guard
+  // If user is unauthenticated, redirect unconditionally to /auth or /login
+  useEffect(() => {
+    const isLoggedIn = Boolean(user) || (typeof window !== 'undefined' && localStorage.getItem('sitdoworld_logged_in') === 'true');
+    const isPublicAuthRoute = currentRoute === '/auth' || currentRoute === '/login' || currentRoute === '/register';
+
+    if (!isLoggedIn && !isPublicAuthRoute) {
+      setCurrentRoute('/auth');
+    }
+  }, [user, currentRoute]);
+
+  // Centralized route navigator with protection
+  const navigate = useCallback((targetRoute: string) => {
+    let normalized = targetRoute;
+    if (normalized === '/pricing') normalized = '/tarifs';
+    if (normalized === '/dashboard') normalized = '/profile';
+    if (normalized === '/achat') normalized = '/payment';
+
+    const isLoggedIn = Boolean(user) || (typeof window !== 'undefined' && localStorage.getItem('sitdoworld_logged_in') === 'true');
+    const isPublicAuthRoute = normalized === '/auth' || normalized === '/login' || normalized === '/register';
+
+    if (!isLoggedIn && !isPublicAuthRoute) {
+      setCurrentRoute('/auth');
+      return;
+    }
+
+    setCurrentRoute(normalized);
+  }, [user]);
+
   // Player controls
   const handlePlaySong = (song: Song) => {
     if (currentSong?.id === song.id) {
@@ -137,33 +172,55 @@ export function App() {
     setIsPlaying(true);
   };
 
-  // Cross actions
+  const hasActivePack = Boolean(user && balance?.has_active_pack && (balance?.available_songs ?? 0) > 0);
+
+  // Cross actions guarded by pack ownership
   const handleOpenStudio = (song: Song) => {
+    if (!hasActivePack) {
+      handleSelectPlan(plans[1] || plans[0]);
+      return;
+    }
     setStudioTargetSong(song);
-    setCurrentRoute('/studio');
+    navigate('/studio');
   };
 
   const handleSelectGenre = (genre: string) => {
+    if (!hasActivePack) {
+      handleSelectPlan(plans[1] || plans[0]);
+      return;
+    }
     setPrefillCreateGenre(genre);
-    setCurrentRoute('/create');
+    navigate('/create');
   };
 
   const handleUseTemplate = (template: PromptTemplate) => {
+    if (!hasActivePack) {
+      handleSelectPlan(plans[1] || plans[0]);
+      return;
+    }
     setPrefillCreateGenre(template.genre);
     setPrefillCreatePrompt(template.prompt);
-    setCurrentRoute('/create');
+    navigate('/create');
   };
 
   const handleRemix = (song: Song) => {
+    if (!hasActivePack) {
+      handleSelectPlan(plans[1] || plans[0]);
+      return;
+    }
     setPrefillCreatePrompt(`Remix officiel de "${song.title}" avec sonorités festives et basses percutantes.`);
     setPrefillCreateGenre(song.genre);
-    setCurrentRoute('/create');
+    navigate('/create');
   };
 
   const handleExtend = (song: Song) => {
+    if (!hasActivePack) {
+      handleSelectPlan(plans[1] || plans[0]);
+      return;
+    }
     setPrefillCreatePrompt(`Extension instrumentale et montée d'énergie pour la chanson "${song.title}".`);
     setPrefillCreateGenre(song.genre);
-    setCurrentRoute('/create');
+    navigate('/create');
   };
 
   const handleDeleteSong = async (songId: string) => {
@@ -181,68 +238,81 @@ export function App() {
 
   const handleSelectPlan = (plan: Plan) => {
     setSelectedPlanForPayment(plan);
-    setCurrentRoute('/payment');
+    navigate('/payment');
   };
+
+  // Auth Success Handler: user lands immediately on Accueil '/'
+  const handleAuthSuccess = (u: User, b: UserSongBalance) => {
+    setUser(u);
+    setBalance(b);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('sitdoworld_logged_in', 'true');
+      localStorage.setItem('sitdoworld_user_id', u.id);
+    }
+    setCurrentRoute('/');
+  };
+
+  const handleLogout = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('sitdoworld_logged_in');
+      localStorage.removeItem('sitdoworld_user_id');
+    }
+    setUser(null);
+    setBalance(null);
+    setCurrentRoute('/auth');
+  };
+
+  const isAuthRoute = currentRoute === '/auth' || currentRoute === '/login' || currentRoute === '/register';
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-[#0F172A] flex flex-col font-sans selection:bg-orange-500 selection:text-white">
       {/* Top Header */}
       <Header
         currentRoute={currentRoute}
-        navigate={(r) => setCurrentRoute(r)}
+        navigate={navigate}
         user={user}
         balance={balance}
         onOpenAuth={() => setAuthModalOpen(true)}
-        onLogout={() => {
-          localStorage.removeItem('sitdoworld_logged_in');
-          localStorage.removeItem('sitdoworld_user_id');
-          setUser(null);
-          setBalance(null);
-          setCurrentRoute('/auth');
-        }}
+        onLogout={handleLogout}
       />
 
       {/* Main Container View */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6">
         {/* Registration or Login Page (Gateway before Home View) */}
-        {currentRoute === '/auth' && (
+        {isAuthRoute && (
           <AuthView
-            onAuthSuccess={(u, b) => {
-              setUser(u);
-              setBalance(b);
-              setCurrentRoute('/');
-            }}
-            onExploreAsGuest={() => setCurrentRoute('/')}
+            initialMode={currentRoute === '/login' ? 'login' : 'register'}
+            onAuthSuccess={handleAuthSuccess}
           />
         )}
 
-        {currentRoute === '/' && (
+        {/* Home View (Requires Authentication) */}
+        {currentRoute === '/' && user && (
           <HomeView
-            navigate={(r) => setCurrentRoute(r)}
+            navigate={navigate}
             songs={songs}
             playlists={playlists}
             currentSong={currentSong}
             isPlaying={isPlaying}
             onPlaySong={handlePlaySong}
             onSelectGenre={handleSelectGenre}
-            onOpenStudio={handleOpenStudio}
-            plans={plans}
-            onSelectPlan={handleSelectPlan}
+            onOpenStudio={hasActivePack ? handleOpenStudio : undefined}
+            hasActivePack={hasActivePack}
           />
         )}
 
-        {currentRoute === '/discover' && (
+        {currentRoute === '/discover' && user && (
           <DiscoverView
             songs={songs}
             currentSong={currentSong}
             isPlaying={isPlaying}
             onPlaySong={handlePlaySong}
-            onOpenStudio={handleOpenStudio}
-            onRemixSong={handleRemix}
+            onOpenStudio={hasActivePack ? handleOpenStudio : undefined}
+            onRemixSong={hasActivePack ? handleRemix : () => handleSelectPlan(plans[1] || plans[0])}
           />
         )}
 
-        {currentRoute === '/create' && (
+        {currentRoute === '/create' && user && (
           <CreateView
             balance={balance}
             onGenerationFinished={() => {
@@ -253,79 +323,109 @@ export function App() {
             onPlaySong={handlePlaySong}
             currentSong={currentSong}
             isPlaying={isPlaying}
-            navigate={(r) => setCurrentRoute(r)}
+            navigate={navigate}
             prefillGenre={prefillCreateGenre}
             prefillPrompt={prefillCreatePrompt}
+            plans={plans}
+            onSelectPlan={handleSelectPlan}
           />
         )}
 
-        {currentRoute === '/library' && (
+        {currentRoute === '/library' && user && (
           <LibraryView
             songs={songs}
             currentUserId={user?.id || 'user-default-1'}
             currentSong={currentSong}
             isPlaying={isPlaying}
             onPlaySong={handlePlaySong}
-            onOpenStudio={handleOpenStudio}
-            onRemixSong={handleRemix}
-            onExtendSong={handleExtend}
+            onOpenStudio={hasActivePack ? handleOpenStudio : () => handleSelectPlan(plans[1] || plans[0])}
+            onRemixSong={hasActivePack ? handleRemix : () => handleSelectPlan(plans[1] || plans[0])}
+            onExtendSong={hasActivePack ? handleExtend : () => handleSelectPlan(plans[1] || plans[0])}
             onDeleteSong={handleDeleteSong}
-            navigate={(r) => setCurrentRoute(r)}
+            navigate={navigate}
           />
         )}
 
-        {currentRoute === '/playlists' && (
+        {currentRoute === '/playlists' && user && (
           <PlaylistsView
             playlists={playlists}
             onPlaySong={handlePlaySong}
             currentSong={currentSong}
             isPlaying={isPlaying}
-            onOpenStudio={handleOpenStudio}
+            onOpenStudio={hasActivePack ? handleOpenStudio : () => handleSelectPlan(plans[1] || plans[0])}
           />
         )}
 
-        {currentRoute === '/studio' && (
-          <StudioView
-            song={studioTargetSong || currentSong}
-            onRemix={handleRemix}
-            onExtend={handleExtend}
-          />
+        {currentRoute === '/studio' && user && (
+          hasActivePack ? (
+            <StudioView
+              song={studioTargetSong || currentSong}
+              onRemix={handleRemix}
+              onExtend={handleExtend}
+            />
+          ) : (
+            <StudioLockedGate
+              plans={plans}
+              onSelectPlan={handleSelectPlan}
+              navigate={navigate}
+              title="Accès au Studio Multitrack Réservé"
+            />
+          )
         )}
 
-        {currentRoute === '/voices' && (
-          <VoicesView
-            voices={voices}
-            onVoiceCreated={(v) => setVoices([v, ...voices])}
-          />
+        {currentRoute === '/voices' && user && (
+          hasActivePack ? (
+            <VoicesView
+              voices={voices}
+              onVoiceCreated={(v) => setVoices([v, ...voices])}
+            />
+          ) : (
+            <StudioLockedGate
+              plans={plans}
+              onSelectPlan={handleSelectPlan}
+              navigate={navigate}
+              title="Accès au Studio Vocal Réservé"
+            />
+          )
         )}
 
-        {currentRoute === '/templates' && (
-          <TemplatesView
-            templates={templates}
-            onUseTemplate={handleUseTemplate}
-          />
+        {currentRoute === '/templates' && user && (
+          hasActivePack ? (
+            <TemplatesView
+              templates={templates}
+              onUseTemplate={handleUseTemplate}
+            />
+          ) : (
+            <StudioLockedGate
+              plans={plans}
+              onSelectPlan={handleSelectPlan}
+              navigate={navigate}
+              title="Accès aux Templates Studio Réservé"
+            />
+          )
         )}
 
-        {currentRoute === '/pricing' && (
+        {/* The SINGLE Official Pricing Page (/tarifs and /pricing) */}
+        {(currentRoute === '/tarifs' || currentRoute === '/pricing') && user && (
           <PricingView
             plans={plans}
             onSelectPlan={handleSelectPlan}
           />
         )}
 
-        {currentRoute === '/payment' && (
+        {currentRoute === '/payment' && user && (
           <PaymentView
             plan={selectedPlanForPayment || plans[1] || null}
-            onBack={() => setCurrentRoute('/pricing')}
+            onBack={() => navigate('/tarifs')}
             onSuccess={(newBal) => {
               setBalance(newBal);
               refreshUserData();
             }}
-            navigate={(r) => setCurrentRoute(r)}
+            navigate={navigate}
           />
         )}
 
-        {currentRoute === '/profile' && (
+        {(currentRoute === '/profile' || currentRoute === '/dashboard') && user && (
           <ProfileView
             user={user}
             balance={balance}
@@ -334,11 +434,11 @@ export function App() {
             isPlaying={isPlaying}
             onPlaySong={handlePlaySong}
             onOpenStudio={handleOpenStudio}
-            navigate={(r) => setCurrentRoute(r)}
+            navigate={navigate}
           />
         )}
 
-        {currentRoute === '/admin' && <AdminView />}
+        {currentRoute === '/admin' && user && <AdminView />}
       </main>
 
       {/* Global Persistent Audio Player */}
@@ -356,13 +456,8 @@ export function App() {
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
         onLoginSuccess={(u, b) => {
-          localStorage.setItem('sitdoworld_logged_in', 'true');
-          localStorage.setItem('sitdoworld_user_id', u.id);
-          setUser(u);
-          setBalance(b);
-          if (currentRoute === '/auth') {
-            setCurrentRoute('/');
-          }
+          handleAuthSuccess(u, b);
+          setAuthModalOpen(false);
         }}
       />
     </div>

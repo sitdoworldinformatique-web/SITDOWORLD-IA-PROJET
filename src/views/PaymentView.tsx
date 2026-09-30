@@ -79,6 +79,7 @@ export const PaymentView: React.FC<PaymentViewProps> = ({
     setIsSubmitting(true);
 
     try {
+      const storedUserId = typeof window !== 'undefined' ? localStorage.getItem('sitdoworld_user_id') : null;
       const res = await fetch('/api/payments/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -86,6 +87,7 @@ export const PaymentView: React.FC<PaymentViewProps> = ({
           plan_id: plan.id,
           customer_phone: phone,
           payment_method: paymentMethod,
+          userId: storedUserId || 'user-default-1',
         }),
       });
 
@@ -99,10 +101,10 @@ export const PaymentView: React.FC<PaymentViewProps> = ({
       // Use returned payment object directly to eliminate unnecessary sequential network delay
       const currentPayment: Payment = data.payment || {
         id: reference,
-        user_id: 'user-default-1',
+        user_id: storedUserId || 'user-default-1',
         merchant_reference: reference,
         transaction_reference: reference,
-        status: data.status || 'PENDING_CUSTOMER_CONFIRMATION',
+        status: data.status || 'PENDING',
         amount: data.amount || plan.price,
         currency: data.currency || plan.currency,
         plan_id: plan.id,
