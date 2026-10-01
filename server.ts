@@ -25,9 +25,9 @@ import { generatedAudioStore } from './server/services/ai/MusicProvider';
 import { sunorMusicProvider } from './server/services/ai/SunorMusicProvider';
 import { supabaseService } from './server/services/supabase';
 
-async function startServer() {
+export async function createExpressApp() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Middleware
   app.use(
@@ -728,7 +728,7 @@ async function startServer() {
 
   // ---------------- AUTH ROUTES ----------------
   app.get('/api/auth/me', (req, res) => {
-    const userId = (req.query.userId as string) || (req.headers['x-user-id'] as string);
+    const userId = (req.query.userId as string) || (req.headers['x-user-id'] as string) || 'user-default-1';
     if (userId && db.users.has(userId)) {
       const user = db.users.get(userId)!;
       const balance = db.getBalance(user.id);
@@ -1141,6 +1141,35 @@ async function startServer() {
     song.likes_count += 1;
     db.songs.set(song.id, song);
     res.json({ success: true, likes_count: song.likes_count });
+  });
+
+  app.post('/api/songs/:id/favorite', (req, res) => {
+    const song = db.songs.get(req.params.id);
+    if (!song) return res.status(404).json({ error: 'Chanson non trouvée.' });
+    song.is_favorite = !song.is_favorite;
+    if (song.is_favorite) {
+      song.likes_count = (song.likes_count || 0) + 1;
+    } else {
+      song.likes_count = Math.max(0, (song.likes_count || 1) - 1);
+    }
+    db.songs.set(song.id, song);
+    res.json({
+      success: true,
+      is_favorite: song.is_favorite,
+      likes_count: song.likes_count,
+      song,
+    });
+  });
+
+  app.post('/api/songs/:id/tags', (req, res) => {
+    const song = db.songs.get(req.params.id);
+    if (!song) return res.status(404).json({ error: 'Chanson non trouvée.' });
+    const { tags } = req.body;
+    if (Array.isArray(tags)) {
+      song.tags = tags.map((t: string) => String(t).trim()).filter(Boolean);
+      db.songs.set(song.id, song);
+    }
+    res.json({ success: true, tags: song.tags, song });
   });
 
   app.post('/api/songs/:id/play', (req, res) => {
@@ -1611,14 +1640,21 @@ async function startServer() {
     });
   });
 
+  return app;
+}
+
+export async function startServer() {
+  const app = await createExpressApp();
+  const PORT = Number(process.env.PORT) || 3000;
+
   // ---------------- VITE MIDDLEWARE / STATIC FILES ----------------
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else {
+  } else if (!process.env.VERCEL) {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
@@ -1626,9 +1662,15 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[SITDOWORLD AI MUSIC] Server running on http://0.0.0.0:${PORT}`);
-  });
+  if (!process.env.VERCEL) {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`[SITDOWORLD AI MUSIC] Server running on http://0.0.0.0:${PORT}`);
+    });
+  }
+
+  return app;
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}

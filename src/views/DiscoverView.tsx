@@ -1,14 +1,13 @@
 import React, { useState } from 'react';
 import {
   Search,
-  SlidersHorizontal,
   Flame,
   Sparkles,
-  TrendingUp,
   Music2,
-  Filter,
+  Heart,
+  Tag,
 } from 'lucide-react';
-import { Song, Genre } from '../types';
+import { Song } from '../types';
 import { SongCard } from '../components/SongCard';
 
 interface DiscoverViewProps {
@@ -18,6 +17,8 @@ interface DiscoverViewProps {
   onPlaySong: (song: Song) => void;
   onOpenStudio?: (song: Song) => void;
   onRemixSong?: (song: Song) => void;
+  onToggleFavorite?: (songId: string) => void;
+  onShare?: (song: Song) => void;
 }
 
 export const DiscoverView: React.FC<DiscoverViewProps> = ({
@@ -27,42 +28,55 @@ export const DiscoverView: React.FC<DiscoverViewProps> = ({
   onPlaySong,
   onOpenStudio,
   onRemixSong,
+  onToggleFavorite,
+  onShare,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState('Tous');
 
+  // Core genres, moods, and dynamic tags requested by user
   const filters = [
-    'Tous',
-    'Tendances',
-    'Nouveautés',
-    'Afro',
-    'Gospel',
-    'Amapiano',
-    'Hip-Hop',
-    'R&B',
-    'Pop',
-    'Dance',
-    'Reggae',
-    'Jazz',
-    'Cinematic',
+    { label: 'Tous', icon: null },
+    { label: 'Favoris ❤️', icon: Heart, isFav: true },
+    { label: 'Tendances', icon: Flame },
+    { label: 'Nouveautés', icon: Sparkles },
+    { label: 'Chill', icon: Tag },
+    { label: 'Workout', icon: Tag },
+    { label: 'Lo-fi', icon: Tag },
+    { label: 'Afrobeat', icon: null },
+    { label: 'Amapiano', icon: null },
+    { label: 'Gospel', icon: null },
+    { label: 'R&B', icon: null },
+    { label: 'Dance', icon: null },
+    { label: 'Romance', icon: Tag },
+    { label: 'Focus', icon: Tag },
   ];
 
   const filteredSongs = songs.filter((song) => {
-    // Search match
+    // Search match across title, prompt, creator, genre, and tags
+    const q = searchTerm.toLowerCase();
     const matchesSearch =
-      song.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      song.prompt.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      song.creator_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      song.genre.toLowerCase().includes(searchTerm.toLowerCase());
+      song.title.toLowerCase().includes(q) ||
+      song.prompt.toLowerCase().includes(q) ||
+      song.creator_name.toLowerCase().includes(q) ||
+      song.genre.toLowerCase().includes(q) ||
+      (song.tags && song.tags.some((t) => t.toLowerCase().includes(q)));
 
     if (!matchesSearch) return false;
 
     // Filter match
     if (activeFilter === 'Tous') return true;
+    if (activeFilter === 'Favoris ❤️') return Boolean(song.is_favorite);
     if (activeFilter === 'Tendances') return song.plays_count >= 500;
     if (activeFilter === 'Nouveautés') return true;
-    if (activeFilter === 'Afro') return song.genre === 'Afrobeat';
-    return song.genre.toLowerCase() === activeFilter.toLowerCase();
+    if (activeFilter === 'Afro') return song.genre.toLowerCase().includes('afro');
+
+    const cleanFilter = activeFilter.toLowerCase();
+    const matchesGenre = song.genre.toLowerCase() === cleanFilter;
+    const matchesMood = song.mood.toLowerCase().includes(cleanFilter);
+    const matchesTag = song.tags && song.tags.some((t) => t.toLowerCase() === cleanFilter);
+
+    return matchesGenre || matchesMood || matchesTag;
   });
 
   return (
@@ -83,15 +97,15 @@ export const DiscoverView: React.FC<DiscoverViewProps> = ({
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="Rechercher titre, genre, créateur..."
+            placeholder="Rechercher titre, tag (#Chill, #Workout), genre..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white border border-slate-200 text-sm focus:outline-hidden focus:border-[#2563EB] focus:ring-2 focus:ring-blue-100 transition-all"
+            className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white border border-slate-200 text-sm focus:outline-hidden focus:border-[#2563EB] focus:ring-2 focus:ring-blue-100 transition-all text-[#0F172A]"
           />
           {searchTerm && (
             <button
               onClick={() => setSearchTerm('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 cursor-pointer"
             >
               Effacer
             </button>
@@ -99,23 +113,23 @@ export const DiscoverView: React.FC<DiscoverViewProps> = ({
         </div>
       </div>
 
-      {/* Filter Tabs */}
+      {/* Dynamic Filter Tags Bar */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
         {filters.map((f) => {
-          const isActive = activeFilter === f;
+          const isActive = activeFilter === f.label;
+          const Icon = f.icon;
           return (
             <button
-              key={f}
-              onClick={() => setActiveFilter(f)}
-              className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+              key={f.label}
+              onClick={() => setActiveFilter(f.label)}
+              className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
                 isActive
                   ? 'bg-[#2563EB] text-white shadow-md shadow-blue-500/20'
                   : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
               }`}
             >
-              {f === 'Tendances' && <Flame className="w-3.5 h-3.5 inline mr-1 text-orange-400" />}
-              {f === 'Nouveautés' && <Sparkles className="w-3.5 h-3.5 inline mr-1 text-blue-400" />}
-              {f}
+              {Icon && <Icon className={`w-3.5 h-3.5 ${f.isFav ? 'text-red-400 fill-current' : ''}`} />}
+              <span>{f.label}</span>
             </button>
           );
         })}
@@ -132,6 +146,9 @@ export const DiscoverView: React.FC<DiscoverViewProps> = ({
               onPlay={onPlaySong}
               onOpenStudio={onOpenStudio}
               onRemix={onRemixSong}
+              onToggleFavorite={onToggleFavorite}
+              onShare={onShare}
+              onSelectTag={(tag) => setActiveFilter(tag)}
             />
           ))}
         </div>
@@ -147,7 +164,7 @@ export const DiscoverView: React.FC<DiscoverViewProps> = ({
               setSearchTerm('');
               setActiveFilter('Tous');
             }}
-            className="mt-4 px-4 py-2 rounded-xl bg-[#2563EB] text-white text-xs font-bold"
+            className="mt-4 px-4 py-2 rounded-xl bg-[#2563EB] text-white text-xs font-bold cursor-pointer"
           >
             Réinitialiser les filtres
           </button>

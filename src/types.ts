@@ -194,6 +194,8 @@ export interface Song {
   stored_audio_url?: string;
   version_tag: 'VERSION A' | 'VERSION B' | 'ORIGINAL' | 'REMIX' | 'EXTENDED';
   is_public: boolean;
+  is_favorite?: boolean;
+  tags?: string[];
   likes_count: number;
   plays_count: number;
   shares_count: number;

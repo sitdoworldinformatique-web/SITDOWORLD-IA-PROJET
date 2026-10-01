@@ -26,6 +26,8 @@ interface HomeViewProps {
   onSelectGenre?: (genre: string) => void;
   onOpenStudio?: (song: Song) => void;
   hasActivePack?: boolean;
+  onToggleFavorite?: (songId: string) => void;
+  onShare?: (song: Song) => void;
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({
@@ -38,6 +40,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onSelectGenre,
   onOpenStudio,
   hasActivePack = false,
+  onToggleFavorite,
+  onShare,
 }) => {
   const genres: { name: Genre; desc: string; color: string; icon: string }[] = [
     { name: 'Afrobeat', desc: 'Burna, Wizkid & Rema vibes', color: 'from-amber-500 to-orange-600', icon: '🥁' },
@@ -281,6 +285,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
               isPlaying={isPlaying && currentSong?.id === song.id}
               onPlay={onPlaySong}
               onOpenStudio={hasActivePack ? onOpenStudio : undefined}
+              onToggleFavorite={onToggleFavorite}
+              onShare={onShare}
+              onSelectTag={(tag) => {
+                navigate('/discover');
+              }}
             />
           ))}
         </div>
@@ -317,6 +326,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
               isPlaying={isPlaying && currentSong?.id === song.id}
               onPlay={onPlaySong}
               onOpenStudio={hasActivePack ? onOpenStudio : undefined}
+              onToggleFavorite={onToggleFavorite}
+              onShare={onShare}
+              onSelectTag={(tag) => {
+                navigate('/discover');
+              }}
             />
           ))}
         </div>

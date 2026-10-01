@@ -316,6 +316,8 @@ export const INITIAL_SONGS: Song[] = [
     lyrics: `[Intro]\nYeah, Sitdoworld AI Music\nSous le soleil qui brille\n\n[Refrain]\nSoleil de Cotonou brille dans tes yeux\nQuand tu danses avec moi le monde est précieux\nBébé viens plus près, laisse parler le cœur\nAvec toi la vie n'a plus de rancœur\n\n[Couplet 1]\nLes vagues de l'océan chantent notre refrain\nTa main dans ma main jusqu'au petit matin`,
     genre: 'Afrobeat',
     mood: 'Romantique & Dansant',
+    tags: ['Afrobeat', 'Chill', 'Romance', 'Dansant'],
+    is_favorite: true,
     duration: 184,
     bpm: 104,
     key: 'F# Minor',
@@ -339,6 +341,8 @@ export const INITIAL_SONGS: Song[] = [
     lyrics: `[Intro]\nDeep night, quiet soul\nLet the bass take control\n\n[Chorus]\nMidnight prayer through the sound\nJoy and peace will be found\nFeel the log drum resonance\nThis is our holy dance`,
     genre: 'Amapiano',
     mood: 'Spirituel & Chill',
+    tags: ['Amapiano', 'Chill', 'Lo-fi', 'Spiritual'],
+    is_favorite: false,
     duration: 192,
     bpm: 113,
     key: 'C Minor',
@@ -362,6 +366,8 @@ export const INITIAL_SONGS: Song[] = [
     lyrics: `[Intro]\nPour toi mon amour...\n\n[Refrain]\nMon amour pour la vie\nDans tes yeux tout s'illumine\nAvec toi je renais\nPour toujours et à jamais`,
     genre: 'Afrobeat',
     mood: 'Inspirant & Majestueux',
+    tags: ['Afrobeat', 'Romance', 'Focus'],
+    is_favorite: true,
     duration: 180,
     bpm: 105,
     key: 'G Major',
@@ -384,6 +390,8 @@ export const INITIAL_SONGS: Song[] = [
     prompt: 'R&B futuriste, synthés 80s analogiques, beat trap feutré et harmonies vocales soyeuses',
     genre: 'R&B',
     mood: 'Nocturne & Sensuel',
+    tags: ['R&B', 'Chill', 'Nocturne', 'Lo-fi'],
+    is_favorite: false,
     duration: 168,
     bpm: 88,
     key: 'D Minor',
@@ -399,6 +407,54 @@ export const INITIAL_SONGS: Song[] = [
     shares_count: 19,
     stems_extracted: false,
     created_at: new Date(Date.now() - 3600 * 1000 * 24 * 1).toISOString(),
+  },
+  {
+    id: 'song-seed-5',
+    title: 'Kinshasa Energy Rush',
+    prompt: 'Afro-dancehall hyper cadencé avec percussions frénétiques, cuivres vibrants et basse percutante pour entraînement',
+    genre: 'Dance',
+    mood: 'Énergique & Explosif',
+    tags: ['Workout', 'Dance', 'Party', 'Afrobeat'],
+    is_favorite: true,
+    duration: 175,
+    bpm: 128,
+    key: 'A Minor',
+    creator_id: 'user-default-1',
+    creator_name: 'Sitdo Music',
+    creator_avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
+    cover_url: 'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?auto=format&fit=crop&w=600&q=80',
+    audio_url: 'https://audio.sunor.cc/audio/26364c90-6b75-45d7-9c3d-dd053c5c3d79/c106336e7aef4300.mp3',
+    version_tag: 'ORIGINAL',
+    is_public: true,
+    likes_count: 312,
+    plays_count: 2840,
+    shares_count: 94,
+    stems_extracted: true,
+    created_at: new Date(Date.now() - 3600 * 1000 * 24 * 4).toISOString(),
+  },
+  {
+    id: 'song-seed-6',
+    title: 'Rainy Night Study Lo-fi',
+    prompt: 'Lo-fi chill hop apaisant avec battements de pluie, vinyle crackle, piano électrique Fender Rhodes et basse ronde',
+    genre: 'Lo-fi',
+    mood: 'Détente & Concentration',
+    tags: ['Lo-fi', 'Chill', 'Focus', 'Study'],
+    is_favorite: false,
+    duration: 160,
+    bpm: 78,
+    key: 'Eb Major',
+    creator_id: 'user-client-4',
+    creator_name: 'Chloé Laurent',
+    creator_avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=200&q=80',
+    cover_url: 'https://images.unsplash.com/photo-1518895949257-7621c3c786d7?auto=format&fit=crop&w=600&q=80',
+    audio_url: 'https://audio.sunor.cc/audio/ece5be6f-1853-4204-8fc5-c4c8a6c4f80f/5cd9c7d548a522e8.mp3',
+    version_tag: 'ORIGINAL',
+    is_public: true,
+    likes_count: 178,
+    plays_count: 1620,
+    shares_count: 45,
+    stems_extracted: false,
+    created_at: new Date(Date.now() - 3600 * 1000 * 18).toISOString(),
   },
 ];
 
@@ -1199,6 +1255,34 @@ class Database {
     this.songs.delete(songId);
     this.logEvent('song_deleted', 'admin', { songId, title: s?.title });
     return true;
+  }
+
+  public toggleFavorite(songId: string): { success: boolean; is_favorite: boolean; likes_count: number } | null {
+    const song = this.songs.get(songId);
+    if (!song) return null;
+    song.is_favorite = !song.is_favorite;
+    if (song.is_favorite) {
+      song.likes_count = (song.likes_count || 0) + 1;
+    } else {
+      song.likes_count = Math.max(0, (song.likes_count || 1) - 1);
+    }
+    this.songs.set(songId, song);
+    return {
+      success: true,
+      is_favorite: song.is_favorite,
+      likes_count: song.likes_count,
+    };
+  }
+
+  public recordShare(songId: string): { success: boolean; shares_count: number } | null {
+    const song = this.songs.get(songId);
+    if (!song) return null;
+    song.shares_count = (song.shares_count || 0) + 1;
+    this.songs.set(songId, song);
+    return {
+      success: true,
+      shares_count: song.shares_count,
+    };
   }
 
   public clearTestSongs(): { deletedCount: number; remainingSongs: number } {

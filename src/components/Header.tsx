@@ -45,28 +45,16 @@ export const Header: React.FC<HeaderProps> = ({
   const availableSongs = balance?.available_songs ?? 0;
   const hasActivePack = Boolean(user && balance?.has_active_pack && availableSongs > 0);
 
-  // When user has an active pack, show full studio tools. When logged in without pack, show standard tools.
-  const navItems = !user
-    ? [
-        { label: 'Connexion / Inscription', route: '/auth', icon: UserIcon },
-      ]
-    : hasActivePack
-    ? [
-        { label: 'Accueil', route: '/', icon: Music },
-        { label: 'Découvrir', route: '/discover', icon: Compass },
-        { label: 'Studio Création', route: '/create', icon: Sparkles },
-        { label: 'Ma musique', route: '/library', icon: Library },
-        { label: 'Playlists', route: '/playlists', icon: ListMusic },
-        { label: 'Studio Multitrack', route: '/studio', icon: SlidersHorizontal },
-        { label: 'Voix', route: '/voices', icon: Mic },
-        { label: 'Templates', route: '/templates', icon: LayoutGrid },
-        { label: 'Tarifs', route: '/tarifs', icon: CreditCard },
-      ]
-    : [
-        { label: 'Accueil', route: '/', icon: Music },
-        { label: 'Découvrir', route: '/discover', icon: Compass },
-        { label: 'Tarifs & Packs', route: '/tarifs', icon: CreditCard },
-      ];
+  // All primary studio navigation links are always visible for a rich, vibrant creator experience
+  const navItems = [
+    { label: 'Accueil', route: '/', icon: Music },
+    { label: 'Découvrir', route: '/discover', icon: Compass },
+    { label: 'Studio Création', route: '/create', icon: Sparkles },
+    { label: 'Ma musique', route: '/library', icon: Library },
+    { label: 'Playlists', route: '/playlists', icon: ListMusic },
+    { label: 'Studio Multitrack', route: '/studio', icon: SlidersHorizontal },
+    { label: 'Tarifs & Packs', route: '/tarifs', icon: CreditCard },
+  ];
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-xs">

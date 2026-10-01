@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header';
 import { GlobalAudioPlayer } from './components/GlobalAudioPlayer';
 import { AuthModal } from './components/AuthModal';
+import { ShareModal } from './components/ShareModal';
 
 import { AuthView } from './views/AuthView';
 import { HomeView } from './views/HomeView';
@@ -19,28 +20,57 @@ import { AdminView } from './views/AdminView';
 import { StudioLockedGate } from './components/StudioLockedGate';
 
 import { User, UserSongBalance, Song, Playlist, Plan, PromptTemplate, VoiceProfile } from './types';
+import {
+  FALLBACK_SONGS,
+  FALLBACK_PLANS,
+  FALLBACK_PLAYLISTS,
+  FALLBACK_TEMPLATES,
+  FALLBACK_VOICES,
+} from './data/fallbackData';
+
+// Resilient API Fetch Helper: Never crashes on HTML 404/500 responses
+async function safeJsonFetch<T = any>(url: string, options?: RequestInit): Promise<T | null> {
+  try {
+    const res = await fetch(url, options);
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      return (await res.json()) as T;
+    }
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return null;
+    }
+  } catch (err) {
+    console.warn(`[API Continuity] Fetch error on ${url}:`, err);
+    return null;
+  }
+}
 
 export function App() {
-  // Navigation: unauthenticated visitors arrive on the registration/login page first
+  // Navigation: Landing page / is always open and visible
   const [currentRoute, setCurrentRoute] = useState<string>(() => {
     if (typeof window !== 'undefined') {
-      const isLoggedIn = localStorage.getItem('sitdoworld_logged_in') === 'true';
-      return isLoggedIn ? '/' : '/auth';
+      const path = window.location.pathname;
+      if (path && path !== '/' && path !== '/index.html') {
+        return path;
+      }
     }
-    return '/auth';
+    return '/';
   });
 
-  // Global State
+  // Global State (Initialized with rich, high-fidelity fallback data to guarantee zero blank screens)
   const [user, setUser] = useState<User | null>(null);
   const [balance, setBalance] = useState<UserSongBalance | null>(null);
-  const [songs, setSongs] = useState<Song[]>([]);
-  const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [plans, setPlans] = useState<Plan[]>([]);
-  const [templates, setTemplates] = useState<PromptTemplate[]>([]);
-  const [voices, setVoices] = useState<VoiceProfile[]>([]);
+  const [songs, setSongs] = useState<Song[]>(FALLBACK_SONGS);
+  const [playlists, setPlaylists] = useState<Playlist[]>(FALLBACK_PLAYLISTS);
+  const [plans, setPlans] = useState<Plan[]>(FALLBACK_PLANS);
+  const [templates, setTemplates] = useState<PromptTemplate[]>(FALLBACK_TEMPLATES);
+  const [voices, setVoices] = useState<VoiceProfile[]>(FALLBACK_VOICES);
 
-  // Audio Player State
-  const [currentSong, setCurrentSong] = useState<Song | null>(null);
+  // Audio Player State (Always ready with a track)
+  const [currentSong, setCurrentSong] = useState<Song | null>(FALLBACK_SONGS[0]);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
   // Cross-view contextual state
@@ -49,27 +79,56 @@ export function App() {
   const [prefillCreatePrompt, setPrefillCreatePrompt] = useState<string | undefined>();
   const [studioTargetSong, setStudioTargetSong] = useState<Song | null>(null);
 
-  // Auth modal
+  // Modals state
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [shareModalSong, setShareModalSong] = useState<Song | null>(null);
+
+  const handleShareSong = (song: Song) => {
+    setShareModalSong(song);
+  };
+
+  const handleToggleFavorite = async (songId: string) => {
+    // Optimistic UI update across all songs
+    setSongs((prev) =>
+      prev.map((s) => {
+        if (s.id === songId) {
+          const nextFav = !s.is_favorite;
+          return {
+            ...s,
+            is_favorite: nextFav,
+            likes_count: nextFav ? (s.likes_count || 0) + 1 : Math.max(0, (s.likes_count || 1) - 1),
+          };
+        }
+        return s;
+      })
+    );
+
+    try {
+      await fetch(`/api/songs/${songId}/favorite`, { method: 'POST' });
+    } catch (err) {
+      console.error('Error toggling song favorite:', err);
+    }
+  };
 
   // Initial Data Fetch
   const refreshUserData = async () => {
     try {
       const storedUserId = typeof window !== 'undefined' ? localStorage.getItem('sitdoworld_user_id') : null;
-      const url = storedUserId ? `/api/auth/me?userId=${encodeURIComponent(storedUserId)}` : '/api/auth/me';
-      const res = await fetch(url);
-      const data = await res.json();
-      if (data.user) {
+      // If user logged out explicitly, storedUserId may be 'guest'
+      const url = storedUserId && storedUserId !== 'guest'
+        ? `/api/auth/me?userId=${encodeURIComponent(storedUserId)}`
+        : '/api/auth/me';
+      const data = await safeJsonFetch<{ user?: User; balance?: UserSongBalance }>(url);
+      if (data && data.user) {
         setUser(data.user);
         if (data.balance) setBalance(data.balance);
+        if (typeof window !== 'undefined' && storedUserId !== 'guest') {
+          localStorage.setItem('sitdoworld_logged_in', 'true');
+          localStorage.setItem('sitdoworld_user_id', data.user.id);
+        }
       } else {
-        // If server says no user, wipe local credentials
         setUser(null);
         setBalance(null);
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('sitdoworld_logged_in');
-          localStorage.removeItem('sitdoworld_user_id');
-        }
       }
     } catch (e) {
       console.error(e);
@@ -78,11 +137,10 @@ export function App() {
 
   const fetchSongs = async () => {
     try {
-      const res = await fetch('/api/songs');
-      const data = await res.json();
-      if (data.songs) {
+      const data = await safeJsonFetch<{ songs?: Song[] }>('/api/songs');
+      if (data && data.songs && Array.isArray(data.songs) && data.songs.length > 0) {
         setSongs(data.songs);
-        if (!currentSong && data.songs.length > 0) {
+        if (!currentSong) {
           setCurrentSong(data.songs[0]);
         }
       }
@@ -97,16 +155,16 @@ export function App() {
 
     try {
       const [plRes, pRes, tRes, vRes] = await Promise.all([
-        fetch('/api/playlists').then((r) => r.json()),
-        fetch('/api/plans').then((r) => r.json()),
-        fetch('/api/templates').then((r) => r.json()),
-        fetch('/api/voices').then((r) => r.json()),
+        safeJsonFetch<{ playlists?: Playlist[] }>('/api/playlists'),
+        safeJsonFetch<{ plans?: Plan[] }>('/api/plans'),
+        safeJsonFetch<{ templates?: PromptTemplate[] }>('/api/templates'),
+        safeJsonFetch<{ voices?: VoiceProfile[] }>('/api/voices'),
       ]);
 
-      if (plRes.playlists) setPlaylists(plRes.playlists);
-      if (pRes.plans) setPlans(pRes.plans);
-      if (tRes.templates) setTemplates(tRes.templates);
-      if (vRes.voices) setVoices(vRes.voices);
+      if (plRes?.playlists && plRes.playlists.length > 0) setPlaylists(plRes.playlists);
+      if (pRes?.plans && pRes.plans.length > 0) setPlans(pRes.plans);
+      if (tRes?.templates && tRes.templates.length > 0) setTemplates(tRes.templates);
+      if (vRes?.voices && vRes.voices.length > 0) setVoices(vRes.voices);
     } catch (err) {
       console.error('Error fetching global platform state:', err);
     }
@@ -116,38 +174,20 @@ export function App() {
     fetchAllData();
   }, []);
 
-  // Strict route protection guard
-  // If user is unauthenticated, redirect unconditionally to /auth or /login
+  // Admin route protection: redirect unprivileged users to home
   useEffect(() => {
-    const isLoggedIn = Boolean(user) || (typeof window !== 'undefined' && localStorage.getItem('sitdoworld_logged_in') === 'true');
-    const isPublicAuthRoute = currentRoute === '/auth' || currentRoute === '/login' || currentRoute === '/register';
-
-    if (!isLoggedIn && !isPublicAuthRoute) {
-      setCurrentRoute('/auth');
-      return;
-    }
-
-    // Role-based protection: if attempting to access /admin without admin or owner role, redirect to /
     const isOwnerOrAdmin = Boolean(user && (user.role === 'admin' || user.role === 'owner'));
     if (currentRoute === '/admin' && !isOwnerOrAdmin) {
       setCurrentRoute('/');
     }
   }, [user, currentRoute]);
 
-  // Centralized route navigator with protection
+  // Centralized route navigator
   const navigate = useCallback((targetRoute: string) => {
     let normalized = targetRoute;
     if (normalized === '/pricing') normalized = '/tarifs';
     if (normalized === '/dashboard') normalized = '/profile';
     if (normalized === '/achat') normalized = '/payment';
-
-    const isLoggedIn = Boolean(user) || (typeof window !== 'undefined' && localStorage.getItem('sitdoworld_logged_in') === 'true');
-    const isPublicAuthRoute = normalized === '/auth' || normalized === '/login' || normalized === '/register';
-
-    if (!isLoggedIn && !isPublicAuthRoute) {
-      setCurrentRoute('/auth');
-      return;
-    }
 
     // Strict Admin route guard: only users with real verified 'admin' or 'owner' role can navigate to /admin
     const isOwnerOrAdmin = Boolean(user && (user.role === 'admin' || user.role === 'owner'));
@@ -157,6 +197,9 @@ export function App() {
     }
 
     setCurrentRoute(normalized);
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   }, [user]);
 
   // Player controls
@@ -269,11 +312,11 @@ export function App() {
   const handleLogout = () => {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('sitdoworld_logged_in');
-      localStorage.removeItem('sitdoworld_user_id');
+      localStorage.setItem('sitdoworld_user_id', 'guest');
     }
     setUser(null);
     setBalance(null);
-    setCurrentRoute('/auth');
+    setCurrentRoute('/');
   };
 
   const isAuthRoute = currentRoute === '/auth' || currentRoute === '/login' || currentRoute === '/register';
@@ -300,8 +343,8 @@ export function App() {
           />
         )}
 
-        {/* Home View (Requires Authentication) */}
-        {currentRoute === '/' && user && (
+        {/* Home View (Always visible on /) */}
+        {currentRoute === '/' && (
           <HomeView
             navigate={navigate}
             songs={songs}
@@ -312,10 +355,13 @@ export function App() {
             onSelectGenre={handleSelectGenre}
             onOpenStudio={hasActivePack ? handleOpenStudio : undefined}
             hasActivePack={hasActivePack}
+            onToggleFavorite={handleToggleFavorite}
+            onShare={handleShareSong}
           />
         )}
 
-        {currentRoute === '/discover' && user && (
+        {/* Discover View (Public Exploration with Favorites & Dynamic Tags) */}
+        {currentRoute === '/discover' && (
           <DiscoverView
             songs={songs}
             currentSong={currentSong}
@@ -323,10 +369,13 @@ export function App() {
             onPlaySong={handlePlaySong}
             onOpenStudio={hasActivePack ? handleOpenStudio : undefined}
             onRemixSong={hasActivePack ? handleRemix : () => handleSelectPlan(plans[1] || plans[0])}
+            onToggleFavorite={handleToggleFavorite}
+            onShare={handleShareSong}
           />
         )}
 
-        {currentRoute === '/create' && user && (
+        {/* Create View */}
+        {currentRoute === '/create' && (
           <CreateView
             balance={balance}
             onGenerationFinished={() => {
@@ -345,7 +394,8 @@ export function App() {
           />
         )}
 
-        {currentRoute === '/library' && user && (
+        {/* Library View (With Favorites & Tags Filtering) */}
+        {currentRoute === '/library' && (
           <LibraryView
             songs={songs}
             currentUserId={user?.id || 'user-default-1'}
@@ -356,11 +406,14 @@ export function App() {
             onRemixSong={hasActivePack ? handleRemix : () => handleSelectPlan(plans[1] || plans[0])}
             onExtendSong={hasActivePack ? handleExtend : () => handleSelectPlan(plans[1] || plans[0])}
             onDeleteSong={handleDeleteSong}
+            onToggleFavorite={handleToggleFavorite}
+            onShare={handleShareSong}
             navigate={navigate}
           />
         )}
 
-        {currentRoute === '/playlists' && user && (
+        {/* Playlists View */}
+        {currentRoute === '/playlists' && (
           <PlaylistsView
             playlists={playlists}
             onPlaySong={handlePlaySong}
@@ -370,7 +423,8 @@ export function App() {
           />
         )}
 
-        {currentRoute === '/studio' && user && (
+        {/* Multitrack Studio */}
+        {currentRoute === '/studio' && (
           hasActivePack ? (
             <StudioView
               song={studioTargetSong || currentSong}
@@ -387,7 +441,8 @@ export function App() {
           )
         )}
 
-        {currentRoute === '/voices' && user && (
+        {/* Voices View */}
+        {currentRoute === '/voices' && (
           hasActivePack ? (
             <VoicesView
               voices={voices}
@@ -403,7 +458,8 @@ export function App() {
           )
         )}
 
-        {currentRoute === '/templates' && user && (
+        {/* Templates View */}
+        {currentRoute === '/templates' && (
           hasActivePack ? (
             <TemplatesView
               templates={templates}
@@ -420,14 +476,14 @@ export function App() {
         )}
 
         {/* The SINGLE Official Pricing Page (/tarifs and /pricing) */}
-        {(currentRoute === '/tarifs' || currentRoute === '/pricing') && user && (
+        {(currentRoute === '/tarifs' || currentRoute === '/pricing') && (
           <PricingView
             plans={plans}
             onSelectPlan={handleSelectPlan}
           />
         )}
 
-        {currentRoute === '/payment' && user && (
+        {currentRoute === '/payment' && (
           <PaymentView
             plan={selectedPlanForPayment || plans[1] || null}
             onBack={() => navigate('/tarifs')}
@@ -439,17 +495,24 @@ export function App() {
           />
         )}
 
-        {(currentRoute === '/profile' || currentRoute === '/dashboard') && user && (
-          <ProfileView
-            user={user}
-            balance={balance}
-            songs={songs}
-            currentSong={currentSong}
-            isPlaying={isPlaying}
-            onPlaySong={handlePlaySong}
-            onOpenStudio={handleOpenStudio}
-            navigate={navigate}
-          />
+        {(currentRoute === '/profile' || currentRoute === '/dashboard') && (
+          user ? (
+            <ProfileView
+              user={user}
+              balance={balance}
+              songs={songs}
+              currentSong={currentSong}
+              isPlaying={isPlaying}
+              onPlaySong={handlePlaySong}
+              onOpenStudio={handleOpenStudio}
+              navigate={navigate}
+            />
+          ) : (
+            <AuthView
+              initialMode="login"
+              onAuthSuccess={handleAuthSuccess}
+            />
+          )
         )}
 
         {currentRoute === '/admin' && user && (user.role === 'admin' || user.role === 'owner') && (
@@ -475,6 +538,12 @@ export function App() {
           handleAuthSuccess(u, b);
           setAuthModalOpen(false);
         }}
+      />
+
+      {/* Global Song Share Modal */}
+      <ShareModal
+        song={shareModalSong}
+        onClose={() => setShareModalSong(null)}
       />
     </div>
   );
