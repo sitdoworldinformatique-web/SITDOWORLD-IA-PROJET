@@ -43,6 +43,12 @@ export const StudioView: React.FC<StudioViewProps> = ({ song, onRemix, onExtend 
   const [masterPitch, setMasterPitch] = useState(0); // semitones -12 to +12
   const [masterVolume, setMasterVolume] = useState(80);
   const [selectedSection, setSelectedSection] = useState<string | null>(null);
+  const [studioToast, setStudioToast] = useState<string | null>(null);
+
+  const triggerStudioAction = (msg: string) => {
+    setStudioToast(msg);
+    setTimeout(() => setStudioToast(null), 3000);
+  };
 
   // Initialize multitrack stems
   const [tracks, setTracks] = useState<StudioTrack[]>([
@@ -366,24 +372,32 @@ export const StudioView: React.FC<StudioViewProps> = ({ song, onRemix, onExtend 
           ))}
         </div>
 
+        {/* Studio Status Toast */}
+        {studioToast && (
+          <div className="p-3 rounded-xl bg-orange-500/10 border border-orange-500/30 text-orange-300 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+            <Sparkles className="w-4 h-4 text-[#FF7A00] shrink-0" />
+            <span>{studioToast}</span>
+          </div>
+        )}
+
         {/* Section Actions: Trim, Split, Add Section */}
         <div className="pt-4 border-t border-slate-800 flex flex-wrap items-center justify-between gap-4 text-xs font-bold text-slate-400">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => alert('Outil Séparer (Split) activé au curseur de lecture.')}
+              onClick={() => triggerStudioAction('Outil Séparer (Split) activé au curseur de lecture.')}
               className="px-3 py-1.5 rounded-lg bg-slate-850 hover:bg-slate-800 text-slate-300 flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <Scissors className="w-3.5 h-3.5" />
               <span>Split Section</span>
             </button>
             <button
-              onClick={() => alert('Section découpée (Trim) avec succès.')}
+              onClick={() => triggerStudioAction('Section découpée (Trim) avec succès.')}
               className="px-3 py-1.5 rounded-lg bg-slate-850 hover:bg-slate-800 text-slate-300 flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <span>Trim Audio</span>
             </button>
             <button
-              onClick={() => alert('Remplacer section par nouvelle variation IA.')}
+              onClick={() => triggerStudioAction('Génération d’une nouvelle variation IA sur la section...')}
               className="px-3 py-1.5 rounded-lg bg-slate-850 hover:bg-slate-800 text-slate-300 flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5 text-[#FF7A00]" />
@@ -393,7 +407,7 @@ export const StudioView: React.FC<StudioViewProps> = ({ song, onRemix, onExtend 
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => alert('Export des 7 Stems WAV en cours de préparation...')}
+              onClick={() => triggerStudioAction('Export des 7 Stems WAV en cours de préparation...')}
               className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />

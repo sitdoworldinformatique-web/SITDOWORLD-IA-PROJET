@@ -5,10 +5,12 @@ import {
   Lock,
   Mail,
   User as UserIcon,
-  SlidersHorizontal,
-  Flame,
-  ShieldCheck,
-  Zap,
+  Headphones,
+  Wand2,
+  Disc3,
+  CheckCircle2,
+  ArrowRight,
+  HelpCircle,
 } from 'lucide-react';
 import { User, UserSongBalance } from '../types';
 
@@ -22,6 +24,9 @@ export const AuthView: React.FC<AuthViewProps> = ({
   initialMode = 'register',
 }) => {
   const [isRegister, setIsRegister] = useState(initialMode === 'register');
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
+  const [resetSuccessMessage, setResetSuccessMessage] = useState<string | null>(null);
+
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -32,10 +37,11 @@ export const AuthView: React.FC<AuthViewProps> = ({
     e.preventDefault();
     setLoading(true);
     setErrorMsg(null);
+    setResetSuccessMessage(null);
 
     const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
     const payload = isRegister
-      ? { email: email.trim(), name: name.trim() || 'Sitdo Creator', password }
+      ? { email: email.trim(), name: name.trim() || 'Créateur', password }
       : { email: email.trim(), password };
 
     try {
@@ -64,36 +70,39 @@ export const AuthView: React.FC<AuthViewProps> = ({
     }
   };
 
-  const handleQuickLogin = async (demoEmail: string) => {
+  const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) {
+      setErrorMsg('Veuillez saisir votre adresse email.');
+      return;
+    }
+
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch('/api/auth/forgot-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: demoEmail }),
+        body: JSON.stringify({ email: email.trim() }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erreur de connexion');
-
-      localStorage.setItem('sitdoworld_logged_in', 'true');
-      localStorage.setItem('sitdoworld_user_id', data.user.id);
-      onAuthSuccess(data.user, data.balance);
+      if (!res.ok) throw new Error(data.error || 'Erreur lors de la demande de réinitialisation.');
+      setResetSuccessMessage('Un lien de réinitialisation sécurisé a été transmis à votre adresse email.');
     } catch (err: any) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || 'Impossible de traiter la demande pour le moment.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-[calc(100vh-6rem)] flex items-center justify-center py-10 px-4 sm:px-6">
+    <div className="min-h-[calc(100vh-6rem)] flex items-center justify-center py-12 px-4 sm:px-6">
       <div className="max-w-5xl w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-        {/* Left Column: Visual Presentation & Benefits */}
+        {/* Left Column: Studio Presentation for Artists & Creators */}
         <div className="lg:col-span-6 space-y-6">
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-100 text-[#FF7A00] text-xs font-black shadow-xs">
             <Sparkles className="w-4 h-4 text-[#FF7A00]" />
-            <span>PORTAIL D'ACCÈS EXCLUSIF CRÉATEURS</span>
+            <span>STUDIO DE CRÉATION MUSICALE IA</span>
           </div>
 
           <div className="space-y-3">
@@ -102,217 +111,287 @@ export const AuthView: React.FC<AuthViewProps> = ({
               <span className="text-[#2563EB]">AI MUSIC</span>.
             </h1>
             <p className="text-sm sm:text-base text-[#64748B] leading-relaxed">
-              Connectez-vous ou créez votre compte pour accéder à votre espace de composition IA, écouter vos projets et commander vos packs de chansons.
+              Connectez-vous ou créez votre compte d'artiste pour composer vos morceaux avec l'intelligence artificielle, explorer les genres musicaux et gérer votre discothèque personnelle.
             </p>
           </div>
 
-          {/* Value points */}
+          {/* Value points purely related to creative music production */}
           <div className="space-y-3 pt-2">
-            <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-xs">
-              <div className="w-9 h-9 rounded-xl bg-orange-100 text-[#FF7A00] flex items-center justify-center shrink-0 mt-0.5">
-                <Flame className="w-5 h-5" />
+            <div className="flex items-start gap-3.5 p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs">
+              <div className="w-10 h-10 rounded-xl bg-orange-100 text-[#FF7A00] flex items-center justify-center shrink-0 mt-0.5">
+                <Wand2 className="w-5 h-5" />
               </div>
               <div>
                 <h4 className="font-extrabold text-sm text-[#0F172A]">
-                  Packs de Chansons à la Carte
+                  Composition Musicale par Intelligence Artificielle
                 </h4>
-                <p className="text-xs text-[#64748B]">
-                  Achetez uniquement les chansons dont vous avez besoin. Vos crédits n'expirent jamais.
+                <p className="text-xs text-[#64748B] mt-0.5 leading-relaxed">
+                  Transformez vos paroles, vos thèmes et vos idées mélodiques en véritables productions sonores masterisées.
                 </p>
               </div>
             </div>
 
-            <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-xs">
-              <div className="w-9 h-9 rounded-xl bg-blue-100 text-[#2563EB] flex items-center justify-center shrink-0 mt-0.5">
-                <SlidersHorizontal className="w-5 h-5" />
+            <div className="flex items-start gap-3.5 p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs">
+              <div className="w-10 h-10 rounded-xl bg-blue-100 text-[#2563EB] flex items-center justify-center shrink-0 mt-0.5">
+                <Disc3 className="w-5 h-5" />
               </div>
               <div>
                 <h4 className="font-extrabold text-sm text-[#0F172A]">
-                  Studio Multitrack & Stems Séparés
+                  Grande Diversité de Styles & Voix
                 </h4>
-                <p className="text-xs text-[#64748B]">
-                  Exportez les pistes voix, drums, basse et instru avec droits commerciaux d'exploitation complets.
+                <p className="text-xs text-[#64748B] mt-0.5 leading-relaxed">
+                  Afrobeat, Amapiano, Gospel, R&B, Pop, Hip-Hop, Dance et Cinématique avec choix d’interprétations vocales.
                 </p>
               </div>
             </div>
 
-            <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-xs">
-              <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                <Zap className="w-5 h-5" />
+            <div className="flex items-start gap-3.5 p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
+                <Headphones className="w-5 h-5" />
               </div>
               <div>
                 <h4 className="font-extrabold text-sm text-[#0F172A]">
-                  Paiement Mobile Money Direct SASPAY.ME
+                  Écoute Haute Fidélité & Exportation
                 </h4>
-                <p className="text-xs text-[#64748B]">
-                  Paiement rapide via Orange Money, MTN MoMo, Wave, Vodacom M-Pesa et Carte bancaire.
+                <p className="text-xs text-[#64748B] mt-0.5 leading-relaxed">
+                  Écoutez vos morceaux sur lecteur intégré, constituez vos playlists et téléchargez vos pistes finales.
                 </p>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Authentication Form Card */}
+        {/* Right Column: Clean Authentication Form Card */}
         <div className="lg:col-span-6">
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/90 shadow-xl relative">
-            {/* Top Toggle: Inscription vs Connexion */}
-            <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-2xl mb-6 select-none">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsRegister(true);
-                  setErrorMsg(null);
-                }}
-                className={`py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                  isRegister
-                    ? 'bg-white text-[#0F172A] shadow-xs'
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-                id="auth-tab-register"
-              >
-                Créer un compte
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsRegister(false);
-                  setErrorMsg(null);
-                }}
-                className={`py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                  !isRegister
-                    ? 'bg-white text-[#0F172A] shadow-xs'
-                    : 'text-slate-500 hover:text-slate-900'
-                }`}
-                id="auth-tab-login"
-              >
-                Se connecter
-              </button>
-            </div>
+            {!isForgotPassword ? (
+              <>
+                {/* Top Toggle: Inscription vs Connexion */}
+                <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-2xl mb-6 select-none">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsRegister(true);
+                      setErrorMsg(null);
+                    }}
+                    className={`py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                      isRegister
+                        ? 'bg-white text-[#0F172A] shadow-xs'
+                        : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                    id="auth-tab-register"
+                  >
+                    Créer un compte
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsRegister(false);
+                      setErrorMsg(null);
+                    }}
+                    className={`py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                      !isRegister
+                        ? 'bg-white text-[#0F172A] shadow-xs'
+                        : 'text-slate-500 hover:text-slate-900'
+                    }`}
+                    id="auth-tab-login"
+                  >
+                    Se connecter
+                  </button>
+                </div>
 
-            {/* Header info */}
-            <div className="mb-6">
-              <h2 className="text-2xl font-black text-[#0F172A]">
-                {isRegister ? 'Inscription Créateur Studio' : 'Connexion à votre Compte'}
-              </h2>
-              <p className="text-xs text-[#64748B] mt-1">
-                {isRegister
-                  ? 'Créez votre profil pour accéder à la plateforme SITDOWORLD IA MUSIC.'
-                  : 'Saisissez vos identifiants pour accéder à votre espace de travail.'}
-              </p>
-            </div>
+                {/* Header info */}
+                <div className="mb-6">
+                  <h2 className="text-2xl font-black text-[#0F172A]">
+                    {isRegister ? 'Inscription Créateur' : 'Connexion à votre Espace'}
+                  </h2>
+                  <p className="text-xs text-[#64748B] mt-1">
+                    {isRegister
+                      ? 'Créez votre profil pour accéder au studio de création musicale.'
+                      : 'Saisissez vos identifiants pour reprendre vos compositions.'}
+                  </p>
+                </div>
 
-            {/* Error banner */}
-            {errorMsg && (
-              <div className="p-3.5 mb-5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold animate-in fade-in">
-                {errorMsg}
+                {/* Error banner */}
+                {errorMsg && (
+                  <div className="p-3.5 mb-5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold animate-in fade-in">
+                    {errorMsg}
+                  </div>
+                )}
+
+                {/* Authentication Form */}
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  {isRegister && (
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-[#0F172A]">
+                        Nom d'artiste ou Nom complet
+                      </label>
+                      <div className="relative">
+                        <UserIcon className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          required
+                          value={name}
+                          onChange={(e) => setName(e.target.value)}
+                          placeholder="Ex: David Beats, Aïcha Vocals"
+                          className="w-full pl-10 pr-3.5 py-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-[#2563EB] focus:bg-white transition-all text-[#0F172A]"
+                          id="auth-name-input"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-[#0F172A]">
+                      Adresse email
+                    </label>
+                    <div className="relative">
+                      <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="email"
+                        required
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="votre.email@exemple.com"
+                        className="w-full pl-10 pr-3.5 py-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-[#2563EB] focus:bg-white transition-all text-[#0F172A]"
+                        id="auth-email-input"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-[#0F172A]">
+                        Mot de passe
+                      </label>
+                      {!isRegister && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsForgotPassword(true);
+                            setErrorMsg(null);
+                            setResetSuccessMessage(null);
+                          }}
+                          className="text-[11px] font-bold text-[#2563EB] hover:underline cursor-pointer"
+                        >
+                          Mot de passe oublié ?
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="password"
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="••••••••••••"
+                        className="w-full pl-10 pr-3.5 py-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-[#2563EB] focus:bg-white transition-all text-[#0F172A]"
+                        id="auth-password-input"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Submit Button */}
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full py-3.5 rounded-2xl bg-[#FF7A00] hover:bg-[#e66e00] text-white font-black text-sm tracking-wide shadow-lg shadow-orange-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 active:scale-98"
+                    id="auth-submit-btn"
+                  >
+                    {loading ? (
+                      <span>Chargement en cours...</span>
+                    ) : isRegister ? (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        <span>Créer mon compte</span>
+                      </>
+                    ) : (
+                      <>
+                        <Music className="w-4 h-4" />
+                        <span>Se connecter</span>
+                      </>
+                    )}
+                  </button>
+                </form>
+              </>
+            ) : (
+              /* Password Reset Sub-flow */
+              <div className="space-y-5 animate-in fade-in">
+                <div>
+                  <h2 className="text-2xl font-black text-[#0F172A]">
+                    Récupération de mot de passe
+                  </h2>
+                  <p className="text-xs text-[#64748B] mt-1">
+                    Indiquez votre adresse email pour recevoir les instructions de réinitialisation.
+                  </p>
+                </div>
+
+                {errorMsg && (
+                  <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold">
+                    {errorMsg}
+                  </div>
+                )}
+
+                {resetSuccessMessage ? (
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-start gap-2.5">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                      <span>{resetSuccessMessage}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsForgotPassword(false);
+                        setIsRegister(false);
+                        setResetSuccessMessage(null);
+                      }}
+                      className="w-full py-3 rounded-xl bg-slate-900 text-white font-bold text-xs cursor-pointer"
+                    >
+                      Retour à la connexion
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={handleForgotPasswordSubmit} className="space-y-4">
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-[#0F172A]">
+                        Adresse email de votre compte
+                      </label>
+                      <div className="relative">
+                        <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="email"
+                          required
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="votre.email@exemple.com"
+                          className="w-full pl-10 pr-3.5 py-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-[#2563EB] focus:bg-white transition-all text-[#0F172A]"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full py-3.5 rounded-2xl bg-[#2563EB] hover:bg-blue-700 text-white font-black text-xs tracking-wide shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                    >
+                      {loading ? 'Envoi en cours...' : 'Envoyer le lien de réinitialisation'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsForgotPassword(false);
+                        setErrorMsg(null);
+                      }}
+                      className="w-full text-center text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer pt-2"
+                    >
+                      Retourner à la connexion
+                    </button>
+                  </form>
+                )}
               </div>
             )}
-
-            {/* Form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {isRegister && (
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-[#0F172A]">
-                    Nom d'artiste / Nom complet
-                  </label>
-                  <div className="relative">
-                    <UserIcon className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      required
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="Ex: Amani Beats, Sarah Vocals, Sitdo"
-                      className="w-full pl-10 pr-3.5 py-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-[#2563EB] focus:bg-white transition-all"
-                      id="auth-name-input"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-1.5">
-                <label className="block text-xs font-bold text-[#0F172A]">
-                  Adresse email
-                </label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="votre.email@exemple.com"
-                    className="w-full pl-10 pr-3.5 py-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-[#2563EB] focus:bg-white transition-all"
-                    id="auth-email-input"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="block text-xs font-bold text-[#0F172A]">
-                  Mot de passe
-                </label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••••••"
-                    className="w-full pl-10 pr-3.5 py-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-[#2563EB] focus:bg-white transition-all"
-                    id="auth-password-input"
-                  />
-                </div>
-              </div>
-
-              {/* Submit CTA */}
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3.5 rounded-2xl bg-[#FF7A00] hover:bg-[#e66e00] text-white font-black text-sm tracking-wide shadow-lg shadow-orange-500/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 active:scale-98"
-                id="auth-submit-btn"
-              >
-                {loading ? (
-                  <span>Chargement en cours...</span>
-                ) : isRegister ? (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    <span>Créer mon compte Créateur</span>
-                  </>
-                ) : (
-                  <>
-                    <Music className="w-4 h-4" />
-                    <span>Se connecter au Studio</span>
-                  </>
-                )}
-              </button>
-            </form>
-
-            {/* Quick Demo Logins for fast test */}
-            <div className="mt-6 pt-5 border-t border-slate-100 space-y-2">
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider text-center">
-                Connexion Rapide (Comptes de Test)
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleQuickLogin('creator@sitdoworld.com')}
-                  className="p-2.5 rounded-xl border border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 text-[11px] font-bold text-slate-700 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <Music className="w-3.5 h-3.5 text-[#2563EB]" />
-                  <span>Compte Créateur</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleQuickLogin('sitdoworldinformatique@gmail.com')}
-                  className="p-2.5 rounded-xl border border-slate-200 hover:border-orange-400 hover:bg-orange-50/50 text-[11px] font-bold text-slate-700 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <ShieldCheck className="w-3.5 h-3.5 text-[#FF7A00]" />
-                  <span>Administrateur</span>
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       </div>

@@ -15,7 +15,7 @@ import {
   lyriaAudioCache,
   GEMINI_PROJECT_ID,
 } from './server/gemini';
-import { PlanId, Song } from './src/types';
+import { PlanId, Song, User } from './src/types';
 import { BACKEND_PRIVATE_SECRET, SUNOR_API_KEY, SUNO_API_KEY } from './server/secrets';
 import { aiProviderManager } from './server/services/ai/AIProviderManager';
 import { ProviderHealthCheck } from './server/services/ai/ProviderHealthCheck';
@@ -214,15 +214,68 @@ async function startServer() {
     }
   });
 
-  // Admin AI Settings & Credentials Management (Section 7)
-  app.get('/api/admin/ai-settings', (req, res) => {
+  // ---------------- AUTHENTICATION & ACCESS CONTROL HELPERS ----------------
+  function getAuthenticatedUser(req: express.Request): User | null {
+    const authHeader = req.headers['authorization'];
+    let bearerId: string | null = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      bearerId = authHeader.substring(7).trim();
+    }
+
+    const userId =
+      bearerId ||
+      (req.headers['x-user-id'] as string) ||
+      (req.query.userId as string) ||
+      (req.body && req.body.userId);
+    if (!userId) return null;
+    return db.users.get(userId) || null;
+  }
+
+  function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({
+        error: 'Non authentifié. Veuillez vous connecter.',
+        code: 'UNAUTHENTICATED',
+      });
+    }
+    if (user.role !== 'admin' && user.role !== 'owner') {
+      return res.status(403).json({
+        error: 'Accès refusé. Cette section est réservée aux administrateurs autorisés.',
+        code: 'FORBIDDEN',
+      });
+    }
+    (req as any).currentUser = user;
+    next();
+  }
+
+  function requireOwner(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const user = getAuthenticatedUser(req);
+    if (!user) {
+      return res.status(401).json({
+        error: 'Non authentifié. Veuillez vous connecter.',
+        code: 'UNAUTHENTICATED',
+      });
+    }
+    if (user.role !== 'owner') {
+      return res.status(403).json({
+        error: 'Accès refusé. Cette action est strictement réservée au propriétaire du SaaS.',
+        code: 'OWNER_REQUIRED',
+      });
+    }
+    (req as any).currentUser = user;
+    next();
+  }
+
+  // Admin AI Settings & Credentials Management (Section 7) - PROTECTED
+  app.get('/api/admin/ai-settings', requireAdmin, (req, res) => {
     const config = aiProviderManager.getSafeConfiguration();
     const envStatus = validateEnvironment();
     res.json({ config, envStatus });
   });
 
-  // Admin AI Connection Tester (Section 7)
-  app.post('/api/admin/ai-settings/test', async (req, res) => {
+  // Admin AI Connection Tester (Section 7) - PROTECTED
+  app.post('/api/admin/ai-settings/test', requireAdmin, async (req, res) => {
     try {
       const { provider = 'gemini' } = req.body;
       if (provider === 'gemini') {
@@ -240,12 +293,12 @@ async function startServer() {
     }
   });
 
-  // SASP.ME Provider Status & Health (Section 9)
-  app.get('/api/admin/saspme/config', (req, res) => {
+  // SASP.ME Provider Status & Health (Section 9) - PROTECTED
+  app.get('/api/admin/saspme/config', requireAdmin, (req, res) => {
     res.json({ config: saspMeProvider.getConfiguration() });
   });
 
-  app.post('/api/admin/saspme/test', async (req, res) => {
+  app.post('/api/admin/saspme/test', requireAdmin, async (req, res) => {
     try {
       const result = await saspMeProvider.healthCheck();
       res.json(result);
@@ -681,36 +734,27 @@ async function startServer() {
       const balance = db.getBalance(user.id);
       return res.json({ user, balance });
     }
-    // Check if autoDefault is requested (e.g. for legacy tests)
-    if (req.query.autoDefault === 'true') {
-      const defaultUser = db.users.get('user-default-1') || Array.from(db.users.values())[0];
-      if (defaultUser) {
-        return res.json({ user: defaultUser, balance: db.getBalance(defaultUser.id) });
-      }
-    }
     res.json({ user: null, balance: null });
   });
 
   app.post('/api/auth/login', (req, res) => {
     const { email } = req.body;
-    let user = Array.from(db.users.values()).find((u) => u.email.toLowerCase() === (email || '').toLowerCase());
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      return res.status(400).json({ error: 'Une adresse email valide est obligatoire.' });
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    const user = Array.from(db.users.values()).find((u) => u.email.toLowerCase() === cleanEmail);
     if (!user) {
-      if (email && email.includes('@')) {
-        const nameFromEmail = email.split('@')[0];
-        user = {
-          id: `user-${Date.now()}`,
-          email,
-          name: nameFromEmail.charAt(0).toUpperCase() + nameFromEmail.slice(1),
-          username: nameFromEmail,
-          avatar_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80',
-          bio: 'Créateur SITDOWORLD AI MUSIC',
-          role: 'creator' as const,
-          created_at: new Date().toISOString(),
-        };
-        db.users.set(user.id, user);
-      } else {
-        user = db.users.get('user-default-1')!;
-      }
+      return res.status(401).json({
+        error: 'Aucun compte associé à cette adresse email. Veuillez créer un compte.',
+        code: 'ACCOUNT_NOT_FOUND',
+      });
+    }
+    if (user.status === 'suspended') {
+      return res.status(403).json({
+        error: 'Votre compte est suspendu. Veuillez contacter le support.',
+        code: 'ACCOUNT_SUSPENDED',
+      });
     }
     const balance = db.getBalance(user.id);
     res.json({ user, balance });
@@ -718,17 +762,30 @@ async function startServer() {
 
   app.post('/api/auth/register', (req, res) => {
     const { email, name, username } = req.body;
-    if (!email || !name) {
-      return res.status(400).json({ error: 'Email et Nom sont obligatoires.' });
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      return res.status(400).json({ error: 'Une adresse email valide est obligatoire.' });
     }
-    const newUser = {
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Votre nom d\'artiste ou nom complet est obligatoire.' });
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    const existing = Array.from(db.users.values()).find((u) => u.email.toLowerCase() === cleanEmail);
+    if (existing) {
+      return res.status(409).json({
+        error: 'Un compte existe déjà avec cette adresse email. Veuillez vous connecter.',
+        code: 'EMAIL_ALREADY_EXISTS',
+      });
+    }
+
+    const newUser: User = {
       id: `user-${Date.now()}`,
-      email,
-      name,
-      username: username || email.split('@')[0],
+      email: cleanEmail,
+      name: name.trim(),
+      username: (username || cleanEmail.split('@')[0]).trim(),
       avatar_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80',
-      bio: 'Nouveau créateur sur SITDOWORLD AI MUSIC',
-      role: 'creator' as const,
+      bio: 'Créateur sur SITDOWORLD AI MUSIC',
+      role: 'creator', // Strictly creator role on public registration, never admin or owner
+      status: 'active',
       created_at: new Date().toISOString(),
     };
     db.users.set(newUser.id, newUser);
@@ -752,13 +809,19 @@ async function startServer() {
 
   // ---------------- USER BALANCE & TRANSACTIONS ----------------
   app.get('/api/user/balance', (req, res) => {
-    const userId = (req.query.userId as string) || 'user-default-1';
+    const userId = (req.query.userId as string) || (req.headers['x-user-id'] as string);
+    if (!userId || !db.users.has(userId)) {
+      return res.status(401).json({ error: 'Non authentifié.', balance: null });
+    }
     const balance = db.getBalance(userId);
     res.json({ balance });
   });
 
   app.get('/api/user/transactions', (req, res) => {
-    const userId = (req.query.userId as string) || 'user-default-1';
+    const userId = (req.query.userId as string) || (req.headers['x-user-id'] as string);
+    if (!userId || !db.users.has(userId)) {
+      return res.status(401).json({ error: 'Non authentifié.', transactions: [] });
+    }
     const txs = db.transactions.filter((t) => t.user_id === userId);
     res.json({ transactions: txs });
   });
@@ -768,7 +831,14 @@ async function startServer() {
   app.post('/api/payments/create', async (req, res) => {
     try {
       const { plan_id, customer_phone, payment_method, userId } = req.body;
-      const targetUserId = userId || 'user-default-1';
+      const targetUserId = userId || (req.headers['x-user-id'] as string);
+
+      if (!targetUserId || !db.users.has(targetUserId)) {
+        return res.status(401).json({
+          error: 'Vous devez être connecté avec un compte pour acheter un pack.',
+          code: 'UNAUTHENTICATED',
+        });
+      }
 
       if (!plan_id) {
         return res.status(400).json({ error: 'plan_id est requis.' });
@@ -823,57 +893,28 @@ async function startServer() {
   app.get('/api/payments/:transactionId/status', handleStatusCheck);
   app.post('/api/payments/verify/:reference', handleStatusCheck);
 
-  // 4. Admin test webhook endpoint (requires admin authorization or development diagnostic key)
+  // 4. Production Mode: simulation endpoint disabled
   app.post('/api/payments/simulate-saspay-approval', (req, res) => {
-    const adminKey = req.headers['x-admin-key'] || req.query.adminKey;
-    const isDev = process.env.NODE_ENV !== 'production';
-    if (!isDev && adminKey !== process.env.BACKEND_SECRET_KEY) {
-      return res.status(403).json({ error: 'Accès interdit. Simulation non autorisée en production.' });
-    }
-
-    const { reference, status = 'SUCCESS' } = req.body;
-    const payment = db.getPayment(reference);
-    if (!payment) {
-      return res.status(404).json({ error: 'Transaction SASPAY non trouvée.' });
-    }
-
-    const sig = saspayService.computeSignature(
-      payment.merchant_reference,
-      payment.amount,
-      payment.currency,
-      status
-    );
-
-    const payload = {
-      merchant_reference: payment.merchant_reference,
-      transaction_reference: payment.merchant_reference,
-      provider_transaction_id: `SAS-ADM-${Date.now()}`,
-      amount: payment.amount,
-      currency: payment.currency,
-      status: status as 'SUCCESS' | 'FAILED',
-      timestamp: new Date().toISOString(),
-      signature: sig,
-    };
-
-    const result = saspayService.processWebhook(payload, sig);
-    const balance = db.getBalance(payment.user_id);
-    res.json({ ...result, payment: db.getPayment(payment.merchant_reference), balance });
+    return res.status(403).json({
+      error: 'Simulation désactivée. Le SaaS fonctionne exclusivement avec la passerelle réelle de paiement SASPAY.ME.',
+      code: 'SIMULATION_DISABLED',
+    });
   });
 
-  // 5. Get recent outgoing Saspay logs (with credentials strictly redacted)
-  app.get('/api/admin/saspay/logs', (req, res) => {
+  // 5. Get recent outgoing Saspay logs (with credentials strictly redacted) - PROTECTED
+  app.get('/api/admin/saspay/logs', requireAdmin, (req, res) => {
     const limit = parseInt(req.query.limit as string) || 50;
     const logs = getRecentSaspayOutgoingLogs(limit);
     res.json({ success: true, count: logs.length, logs });
   });
 
-  app.post('/api/admin/saspay/logs/clear', (req, res) => {
+  app.post('/api/admin/saspay/logs/clear', requireAdmin, (req, res) => {
     clearSaspayOutgoingLogs();
     res.json({ success: true, message: 'Logs Saspay réinitialisés avec succès.' });
   });
 
-  // 6. Manual SASPAY.ME Configuration Endpoints (Admin Controlled)
-  app.get('/api/admin/saspay/config', (req, res) => {
+  // 6. Manual SASPAY.ME Configuration Endpoints (Admin Controlled) - PROTECTED
+  app.get('/api/admin/saspay/config', requireAdmin, (req, res) => {
     try {
       const pub = saspayConfigManager.getPublicConfig(req.get('host'));
       res.json({ success: true, config: pub });
@@ -882,10 +923,10 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/saspay/config', (req, res) => {
+  app.post('/api/admin/saspay/config', requireAdmin, (req, res) => {
     try {
-      const updated = saspayConfigManager.updateConfig(req.body, 'Administrateur');
-      db.logEvent('saas_settings_updated', undefined, {
+      const updated = saspayConfigManager.updateConfig(req.body, (req as any).currentUser?.name || 'Administrateur');
+      db.logEvent('saas_settings_updated', (req as any).currentUser?.id, {
         action: 'SASPAY_MANUAL_CONFIG_UPDATED',
         isActive: updated.isActive,
         isConfigured: updated.isConfigured,
@@ -903,7 +944,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/saspay/test', async (req, res) => {
+  app.post('/api/admin/saspay/test', requireAdmin, async (req, res) => {
     try {
       const result = await saspayConfigManager.testConnection(req.body);
       res.json(result);
@@ -1132,7 +1173,15 @@ async function startServer() {
   app.post('/api/songs/:id/remix', async (req, res) => {
     try {
       const { targetGenre, targetMood, userId } = req.body;
-      const targetUserId = userId || 'user-default-1';
+      const targetUserId = userId || (req.headers['x-user-id'] as string);
+
+      if (!targetUserId || !db.users.has(targetUserId)) {
+        return res.status(401).json({
+          error: 'Vous devez être connecté pour remixer un morceau.',
+          code: 'UNAUTHENTICATED',
+        });
+      }
+
       const balance = db.getBalance(targetUserId);
       const hasActivePack = db.hasActivePack(targetUserId);
 
@@ -1160,7 +1209,15 @@ async function startServer() {
   app.post('/api/songs/:id/extend', async (req, res) => {
     try {
       const { extensionPrompt, userId } = req.body;
-      const targetUserId = userId || 'user-default-1';
+      const targetUserId = userId || (req.headers['x-user-id'] as string);
+
+      if (!targetUserId || !db.users.has(targetUserId)) {
+        return res.status(401).json({
+          error: 'Vous devez être connecté pour étendre un morceau.',
+          code: 'UNAUTHENTICATED',
+        });
+      }
+
       const balance = db.getBalance(targetUserId);
       const hasActivePack = db.hasActivePack(targetUserId);
 
@@ -1261,14 +1318,14 @@ async function startServer() {
     res.json({ templates: db.templates });
   });
 
-  // ---------------- ADMIN PANEL & SAAS DASHBOARD ----------------
-  app.get('/api/admin/stats', (req, res) => {
+  // ---------------- ADMIN PANEL & SAAS DASHBOARD (PROTECTED) ----------------
+  app.get('/api/admin/stats', requireAdmin, (req, res) => {
     const totalUsers = db.users.size;
     const totalSongs = db.songs.size;
     const totalJobs = db.generationJobs.size;
     const paymentsList = Array.from(new Map(Array.from(db.payments.values()).map((p) => [p.id, p])).values());
     const totalRevenue = paymentsList
-      .filter((p) => p.status === 'SUCCESS')
+      .filter((p) => p.status === 'SUCCESS' || p.status === 'CONFIRMED' || p.status === 'PAID')
       .reduce((acc, p) => acc + p.amount, 0);
 
     const totalSongBalances = Array.from(db.songBalances.values()).reduce(
@@ -1311,12 +1368,12 @@ async function startServer() {
     });
   });
 
-  // SaaS Settings Endpoints
-  app.get('/api/admin/saas-settings', (req, res) => {
+  // SaaS Settings Endpoints - PROTECTED
+  app.get('/api/admin/saas-settings', requireAdmin, (req, res) => {
     res.json({ settings: db.getSaaSSettings() });
   });
 
-  app.put('/api/admin/saas-settings', (req, res) => {
+  app.put('/api/admin/saas-settings', requireAdmin, (req, res) => {
     try {
       const updated = db.updateSaaSSettings(req.body);
       res.json({ success: true, settings: updated, message: 'Paramètres SaaS mis à jour avec succès.' });
@@ -1325,12 +1382,13 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/saas-settings/reset', (req, res) => {
+  app.post('/api/admin/saas-settings/reset', requireAdmin, (req, res) => {
     const settings = db.resetSaaSSettings();
     res.json({ success: true, settings, message: 'Paramètres SaaS réinitialisés aux valeurs recommandées.' });
   });
 
-  app.get('/api/admin/users', (req, res) => {
+  // User Management Endpoints - PROTECTED
+  app.get('/api/admin/users', requireAdmin, (req, res) => {
     const usersWithBalances = Array.from(db.users.values()).map((u) => {
       const balance = db.getBalance(u.id);
       return { ...u, balance };
@@ -1338,8 +1396,27 @@ async function startServer() {
     res.json({ users: usersWithBalances });
   });
 
-  app.put('/api/admin/users/:userId', (req, res) => {
+  // Update user: only owner can promote/demote administrators
+  app.put('/api/admin/users/:userId', requireAdmin, (req, res) => {
     const { role, status, is_vip, name, email } = req.body;
+    const currentUser = (req as any).currentUser as User;
+
+    if (role !== undefined) {
+      if (currentUser.role !== 'owner') {
+        return res.status(403).json({
+          error: 'Seul le propriétaire du SaaS est autorisé à attribuer ou modifier les rôles administrateurs.',
+          code: 'OWNER_REQUIRED',
+        });
+      }
+      const targetUser = db.users.get(req.params.userId);
+      if (targetUser && targetUser.role === 'owner' && role !== 'owner') {
+        return res.status(403).json({
+          error: 'Impossible de rétrograder le propriétaire principal du SaaS.',
+          code: 'CANNOT_DEMOTE_OWNER',
+        });
+      }
+    }
+
     const updated = db.updateUser(req.params.userId, {
       ...(role !== undefined && { role }),
       ...(status !== undefined && { status }),
@@ -1351,7 +1428,40 @@ async function startServer() {
     res.json({ success: true, user: { ...updated, balance: db.getBalance(updated.id) } });
   });
 
-  app.post('/api/admin/users/:userId/adjust-balance', (req, res) => {
+  // Administrator Management Endpoints (Owner Only)
+  app.get('/api/admin/administrators', requireAdmin, (req, res) => {
+    const admins = Array.from(db.users.values())
+      .filter((u) => u.role === 'admin' || u.role === 'owner')
+      .map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        role: u.role,
+        status: u.status || 'active',
+        created_at: u.created_at,
+        is_owner: u.role === 'owner',
+      }));
+    res.json({ success: true, administrators: admins });
+  });
+
+  app.post('/api/admin/administrators', requireOwner, (req, res) => {
+    const { email, name } = req.body;
+    if (!email || typeof email !== 'string' || !email.includes('@')) {
+      return res.status(400).json({ error: 'Une adresse email valide est obligatoire.' });
+    }
+    const result = db.addOrPromoteAdmin(email, name);
+    res.json(result);
+  });
+
+  app.delete('/api/admin/administrators/:id', requireOwner, (req, res) => {
+    const result = db.removeAdmin(req.params.id);
+    if (!result.success) {
+      return res.status(400).json({ error: result.message });
+    }
+    res.json(result);
+  });
+
+  app.post('/api/admin/users/:userId/adjust-balance', requireAdmin, (req, res) => {
     const { amount, reason = 'Ajustement manuel administrateur' } = req.body;
     const bal = db.getBalance(req.params.userId);
     bal.available_songs += Number(amount);
@@ -1377,22 +1487,22 @@ async function startServer() {
     res.json({ success: true, balance: bal });
   });
 
-  app.get('/api/admin/logs', (req, res) => {
+  app.get('/api/admin/logs', requireAdmin, (req, res) => {
     res.json({ logs: db.adminLogs });
   });
 
-  app.get('/api/admin/payments', (req, res) => {
+  app.get('/api/admin/payments', requireAdmin, (req, res) => {
     const list = Array.from(new Map(Array.from(db.payments.values()).map((p) => [p.id, p])).values());
     res.json({ payments: list });
   });
 
-  app.delete('/api/admin/payments/:id', (req, res) => {
+  app.delete('/api/admin/payments/:id', requireAdmin, (req, res) => {
     const deleted = db.deletePayment(req.params.id);
     if (!deleted) return res.status(404).json({ error: 'Paiement non trouvé.' });
     res.json({ success: true, message: 'Paiement supprimé.' });
   });
 
-  app.post('/api/admin/payments/clear-test', (req, res) => {
+  app.post('/api/admin/payments/clear-test', requireAdmin, (req, res) => {
     const result = db.clearTestPayments();
     res.json({
       success: true,
@@ -1401,22 +1511,22 @@ async function startServer() {
     });
   });
 
-  app.post('/api/admin/mrr/clear-test', (req, res) => {
+  app.post('/api/admin/mrr/clear-test', requireAdmin, (req, res) => {
     const result = db.clearTestMRR();
     res.json(result);
   });
 
-  app.get('/api/admin/songs', (req, res) => {
+  app.get('/api/admin/songs', requireAdmin, (req, res) => {
     res.json({ songs: Array.from(db.songs.values()) });
   });
 
-  app.delete('/api/admin/songs/:id', (req, res) => {
+  app.delete('/api/admin/songs/:id', requireAdmin, (req, res) => {
     const deleted = db.deleteSong(req.params.id);
     if (!deleted) return res.status(404).json({ error: 'Chanson non trouvée.' });
     res.json({ success: true, message: 'Chanson supprimée par l’administrateur.' });
   });
 
-  app.post('/api/admin/songs/clear-test', (req, res) => {
+  app.post('/api/admin/songs/clear-test', requireAdmin, (req, res) => {
     const result = db.clearTestSongs();
     res.json({
       success: true,
@@ -1425,7 +1535,7 @@ async function startServer() {
     });
   });
 
-  app.put('/api/admin/plans/:id', (req, res) => {
+  app.put('/api/admin/plans/:id', requireAdmin, (req, res) => {
     const { price, songs, active, name, popular } = req.body;
     const plan = db.plans.find((p) => p.id === req.params.id);
     if (!plan) return res.status(404).json({ error: 'Plan non trouvé.' });
@@ -1438,13 +1548,13 @@ async function startServer() {
     res.json({ plan });
   });
 
-  // ---------------- DATABASE MANAGEMENT (SUPABASE) ----------------
-  app.get('/api/admin/database/status', async (req, res) => {
+  // ---------------- DATABASE MANAGEMENT (SUPABASE) (PROTECTED) ----------------
+  app.get('/api/admin/database/status', requireAdmin, async (req, res) => {
     const status = db.getDatabaseStatus();
     res.json(status);
   });
 
-  app.post('/api/admin/database/disconnect', (req, res) => {
+  app.post('/api/admin/database/disconnect', requireAdmin, (req, res) => {
     const result = db.disconnectDatabase();
     res.json({
       ...result,
@@ -1452,7 +1562,7 @@ async function startServer() {
     });
   });
 
-  app.post('/api/admin/database/connect', async (req, res) => {
+  app.post('/api/admin/database/connect', requireAdmin, async (req, res) => {
     const { url = 'https://pctngaoclnwpwouokwxc.supabase.co/rest/v1/', apiKey } = req.body;
     const status = await db.connectDatabase(url, apiKey);
     res.json({
@@ -1462,12 +1572,12 @@ async function startServer() {
     });
   });
 
-  app.post('/api/admin/database/test', async (req, res) => {
+  app.post('/api/admin/database/test', requireAdmin, async (req, res) => {
     const result = await supabaseService.testConnection();
     res.json(result);
   });
 
-  app.post('/api/admin/database/sync', async (req, res) => {
+  app.post('/api/admin/database/sync', requireAdmin, async (req, res) => {
     const songs = Array.from(db.songs.values());
     const users = Array.from(db.users.values());
     const payments = Array.from(new Map(Array.from(db.payments.values()).map((p) => [p.id, p])).values());

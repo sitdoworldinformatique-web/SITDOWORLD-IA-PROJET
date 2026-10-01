@@ -26,7 +26,12 @@ import { SaaSAISettingsTab } from '../components/admin/SaaSAISettingsTab';
 import { SaaSSongsTab } from '../components/admin/SaaSSongsTab';
 import { SaspayConfigTab } from '../components/admin/SaspayConfigTab';
 
-export const AdminView: React.FC = () => {
+interface AdminViewProps {
+  currentUser?: User | null;
+  navigate?: (route: string) => void;
+}
+
+export const AdminView: React.FC<AdminViewProps> = ({ currentUser, navigate }) => {
   const [activeTab, setActiveTab] = useState<
     'overview' | 'saspay_config' | 'ai_settings' | 'settings' | 'songs' | 'users' | 'plans' | 'billing' | 'ai_logs'
   >('overview');
@@ -41,7 +46,12 @@ export const AdminView: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; isError?: boolean } | null>(null);
+
+  const showToast = (message: string, isError = false) => {
+    setToast({ message, isError });
+    setTimeout(() => setToast(null), 4000);
+  };
 
   const fetchData = async () => {
     try {
@@ -84,11 +94,10 @@ export const AdminView: React.FC = () => {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Erreur mise à jour paramètres');
       setSaasSettings(data.settings);
-      setToastMessage('Paramètres du SaaS enregistrés avec succès !');
-      setTimeout(() => setToastMessage(null), 3500);
+      showToast('Paramètres du SaaS enregistrés avec succès !');
       return true;
     } catch (err: any) {
-      alert(`Erreur: ${err.message}`);
+      showToast(`Erreur: ${err.message}`, true);
       return false;
     } finally {
       setSavingSettings(false);
@@ -104,11 +113,10 @@ export const AdminView: React.FC = () => {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Erreur réinitialisation');
       setSaasSettings(data.settings);
-      setToastMessage('Paramètres réinitialisés aux valeurs recommandées.');
-      setTimeout(() => setToastMessage(null), 3500);
+      showToast('Paramètres réinitialisés aux valeurs recommandées.');
       return true;
     } catch (err: any) {
-      alert(`Erreur: ${err.message}`);
+      showToast(`Erreur: ${err.message}`, true);
       return false;
     } finally {
       setSavingSettings(false);
@@ -126,11 +134,15 @@ export const AdminView: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount, reason }),
       });
-      if (!res.ok) throw new Error('Échec ajustement');
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Échec ajustement solde');
+      }
       await fetchData();
+      showToast(`Solde ajusté avec succès (${amount > 0 ? '+' : ''}${amount} créations).`);
       return true;
     } catch (err: any) {
-      alert(`Erreur: ${err.message}`);
+      showToast(`Erreur: ${err.message}`, true);
       return false;
     }
   };
@@ -142,11 +154,49 @@ export const AdminView: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
       });
-      if (!res.ok) throw new Error('Échec mise à jour utilisateur');
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Échec mise à jour utilisateur');
+      }
+      await fetchData();
+      showToast('Compte utilisateur mis à jour.');
+      return true;
+    } catch (err: any) {
+      showToast(`Erreur: ${err.message}`, true);
+      return false;
+    }
+  };
+
+  const handleAddAdmin = async (email: string, name?: string): Promise<boolean> => {
+    try {
+      const res = await fetch('/api/admin/administrators', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, name }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur lors de l’attribution du rôle administrateur');
+      showToast(data.message || `Administrateur ${email} configuré avec succès !`);
       await fetchData();
       return true;
     } catch (err: any) {
-      alert(`Erreur: ${err.message}`);
+      showToast(`Erreur: ${err.message}`, true);
+      return false;
+    }
+  };
+
+  const handleRemoveAdmin = async (userId: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/admin/administrators/${userId}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erreur lors du retrait administrateur');
+      showToast(data.message || 'Droits administrateur retirés avec succès.');
+      await fetchData();
+      return true;
+    } catch (err: any) {
+      showToast(`Erreur: ${err.message}`, true);
       return false;
     }
   };
@@ -158,11 +208,15 @@ export const AdminView: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
       });
-      if (!res.ok) throw new Error('Échec mise à jour plan');
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Échec mise à jour pack');
+      }
       await fetchData();
+      showToast('Pack tarifaire mis à jour.');
       return true;
     } catch (err: any) {
-      alert(`Erreur: ${err.message}`);
+      showToast(`Erreur: ${err.message}`, true);
       return false;
     }
   };
@@ -175,11 +229,10 @@ export const AdminView: React.FC = () => {
       if (!res.ok) throw new Error('Échec suppression chanson');
       setSongs((prev) => prev.filter((s) => s.id !== songId));
       await fetchData();
-      setToastMessage('Chanson supprimée avec succès du catalogue.');
-      setTimeout(() => setToastMessage(null), 3500);
+      showToast('Chanson supprimée du catalogue.');
       return true;
     } catch (err: any) {
-      alert(`Erreur: ${err.message}`);
+      showToast(`Erreur: ${err.message}`, true);
       return false;
     }
   };
@@ -192,11 +245,10 @@ export const AdminView: React.FC = () => {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Échec suppression des tests');
       await fetchData();
-      setToastMessage(data.message || 'Toutes les chansons de test ont été supprimées.');
-      setTimeout(() => setToastMessage(null), 4000);
+      showToast(data.message || 'Chansons de test supprimées.');
       return true;
     } catch (err: any) {
-      alert(`Erreur: ${err.message}`);
+      showToast(`Erreur: ${err.message}`, true);
       return false;
     }
   };
@@ -209,11 +261,10 @@ export const AdminView: React.FC = () => {
       if (!res.ok) throw new Error('Échec suppression paiement');
       setPayments((prev) => prev.filter((p) => p.id !== paymentId));
       await fetchData();
-      setToastMessage('Transaction supprimée avec succès.');
-      setTimeout(() => setToastMessage(null), 3500);
+      showToast('Transaction supprimée avec succès.');
       return true;
     } catch (err: any) {
-      alert(`Erreur: ${err.message}`);
+      showToast(`Erreur: ${err.message}`, true);
       return false;
     }
   };
@@ -226,11 +277,10 @@ export const AdminView: React.FC = () => {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Échec réinitialisation revenus');
       await fetchData();
-      setToastMessage(data.message || 'Revenus et transactions de test supprimés. Chiffre d’affaires réinitialisé à 0$.');
-      setTimeout(() => setToastMessage(null), 4000);
+      showToast(data.message || 'Revenus et transactions de test supprimés.');
       return true;
     } catch (err: any) {
-      alert(`Erreur: ${err.message}`);
+      showToast(`Erreur: ${err.message}`, true);
       return false;
     }
   };
@@ -243,11 +293,10 @@ export const AdminView: React.FC = () => {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Échec suppression MRR test');
       await fetchData();
-      setToastMessage(data.message || 'Chiffre MRR test supprimé avec succès. MRR réinitialisé à $0.');
-      setTimeout(() => setToastMessage(null), 4000);
+      showToast(data.message || 'MRR test réinitialisé à $0.');
       return true;
     } catch (err: any) {
-      alert(`Erreur: ${err.message}`);
+      showToast(`Erreur: ${err.message}`, true);
       return false;
     }
   };
@@ -352,10 +401,20 @@ export const AdminView: React.FC = () => {
       </div>
 
       {/* Global Toast */}
-      {toastMessage && (
-        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-2.5 animate-in fade-in">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>{toastMessage}</span>
+      {toast && (
+        <div
+          className={`p-4 rounded-2xl border text-xs font-semibold flex items-center gap-2.5 animate-in fade-in ${
+            toast.isError
+              ? 'bg-rose-50 border-rose-200 text-rose-800'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}
+        >
+          {toast.isError ? (
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+          ) : (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          )}
+          <span>{toast.message}</span>
         </div>
       )}
 
@@ -435,8 +494,11 @@ export const AdminView: React.FC = () => {
       {activeTab === 'users' && (
         <SaaSUsersTab
           users={users}
+          currentUser={currentUser}
           onAdjustBalance={handleAdjustBalance}
           onUpdateUser={handleUpdateUser}
+          onAddAdmin={handleAddAdmin}
+          onRemoveAdmin={handleRemoveAdmin}
           onRefresh={fetchData}
         />
       )}

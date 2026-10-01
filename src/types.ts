@@ -256,7 +256,7 @@ export interface User {
   username: string;
   avatar_url?: string;
   bio?: string;
-  role: 'user' | 'creator' | 'admin';
+  role: 'user' | 'creator' | 'admin' | 'owner';
   status?: 'active' | 'suspended';
   is_vip?: boolean;
   created_at: string;
@@ -330,7 +330,9 @@ export interface AdminLog {
     | 'test_songs_cleared'
     | 'test_mrr_cleared'
     | 'database_disconnected'
-    | 'database_connected';
+    | 'database_connected'
+    | 'admin_added'
+    | 'admin_removed';
   user_id?: string;
   details: Record<string, unknown>;
   timestamp: string;

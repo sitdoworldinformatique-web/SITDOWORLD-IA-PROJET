@@ -432,7 +432,7 @@ class Database {
       username: 'sitdoworld',
       avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
       bio: 'Fondateur & producteur musical chez SITDOWORLD AI MUSIC. Créateur de sonorités afrobeat et cinématographiques.',
-      role: 'admin',
+      role: 'owner',
       status: 'active',
       is_vip: true,
       created_at: new Date(Date.now() - 3600 * 1000 * 24 * 30).toISOString(),
@@ -1067,6 +1067,60 @@ class Database {
     });
 
     return updatedUser;
+  }
+
+  public isOwner(userId: string): boolean {
+    const user = this.users.get(userId);
+    if (!user) return false;
+    return user.role === 'owner' || user.email.toLowerCase() === 'sitdoworldinformatique@gmail.com';
+  }
+
+  public isAdmin(userId: string): boolean {
+    const user = this.users.get(userId);
+    if (!user) return false;
+    return user.role === 'admin' || user.role === 'owner' || user.email.toLowerCase() === 'sitdoworldinformatique@gmail.com';
+  }
+
+  public addOrPromoteAdmin(email: string, name?: string): { success: boolean; user?: User; message: string } {
+    const cleanEmail = email.trim().toLowerCase();
+    let existing = Array.from(this.users.values()).find((u) => u.email.toLowerCase() === cleanEmail);
+
+    if (existing) {
+      if (existing.role === 'owner') {
+        return { success: true, user: existing, message: 'Cet utilisateur est le propriétaire principal du SaaS.' };
+      }
+      existing.role = 'admin';
+      this.users.set(existing.id, existing);
+      this.logEvent('admin_added', existing.id, { email: cleanEmail, promoted: true });
+      return { success: true, user: existing, message: `L'utilisateur ${cleanEmail} est désormais Administrateur.` };
+    }
+
+    const newAdmin: User = {
+      id: `admin-${Date.now()}`,
+      email: cleanEmail,
+      name: name || cleanEmail.split('@')[0],
+      username: cleanEmail.split('@')[0],
+      avatar_url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=200&q=80',
+      bio: 'Administrateur SITDOWORLD AI MUSIC',
+      role: 'admin',
+      status: 'active',
+      created_at: new Date().toISOString(),
+    };
+    this.users.set(newAdmin.id, newAdmin);
+    this.logEvent('admin_added', newAdmin.id, { email: cleanEmail, created: true });
+    return { success: true, user: newAdmin, message: `Administrateur ${cleanEmail} ajouté avec succès.` };
+  }
+
+  public removeAdmin(targetUserId: string): { success: boolean; message: string } {
+    const user = this.users.get(targetUserId);
+    if (!user) return { success: false, message: 'Utilisateur introuvable.' };
+    if (user.role === 'owner' || user.email.toLowerCase() === 'sitdoworldinformatique@gmail.com') {
+      return { success: false, message: 'Impossible de révoquer le propriétaire principal du SaaS.' };
+    }
+    user.role = 'creator';
+    this.users.set(targetUserId, user);
+    this.logEvent('admin_removed', targetUserId, { email: user.email });
+    return { success: true, message: `Les droits administrateur ont été retirés à ${user.name} (${user.email}).` };
   }
 
   public updatePlan(planId: string, updates: Partial<Plan>): Plan | null {

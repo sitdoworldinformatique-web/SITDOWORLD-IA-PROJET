@@ -113,7 +113,6 @@ export const SaaSAISettingsTab: React.FC = () => {
   };
 
   const handleDisconnectDatabase = async () => {
-    if (!window.confirm('Êtes-vous sûr de vouloir déconnecter la base de données actuelle ?')) return;
     setLoadingDb(true);
     setDbActionResult(null);
     try {

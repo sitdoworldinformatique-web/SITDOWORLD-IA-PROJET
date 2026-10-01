@@ -224,24 +224,20 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <CreditCard className="w-4 h-4" /> Acheter des chansons ({availableSongs} dispo)
                 </button>
-                <button
-                  onClick={() => {
-                    navigate('/admin');
-                    setProfileOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-2 text-xs text-orange-700 hover:bg-orange-50 flex items-center gap-2 font-bold"
-                >
-                  <Sliders className="w-4 h-4 text-orange-600" /> Paramètres du SaaS
-                </button>
-                <button
-                  onClick={() => {
-                    navigate('/admin');
-                    setProfileOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-2 text-xs text-indigo-700 hover:bg-indigo-50 flex items-center gap-2 font-semibold"
-                >
-                  <ShieldCheck className="w-4 h-4 text-indigo-600" /> Tableau de Bord Admin
-                </button>
+                {/* Administration Privée (Uniquement pour Administrateurs et Propriétaire autorisés) */}
+                {(user.role === 'admin' || user.role === 'owner') && (
+                  <button
+                    onClick={() => {
+                      navigate('/admin');
+                      setProfileOpen(false);
+                    }}
+                    id="header-admin-menu-link"
+                    className="w-full text-left px-4 py-2 text-xs text-indigo-700 hover:bg-indigo-50 flex items-center gap-2 font-bold"
+                  >
+                    <ShieldCheck className="w-4 h-4 text-indigo-600" />
+                    <span>{user.role === 'owner' ? 'Administration & Propriétaire' : 'Administration'}</span>
+                  </button>
+                )}
                 <div className="border-t border-slate-100 my-1"></div>
                 <button
                   onClick={() => {
@@ -322,17 +318,19 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             );
           })}
-          <div className="pt-2 border-t border-slate-100">
-            <button
-              onClick={() => {
-                navigate('/admin');
-                setMobileMenuOpen(false);
-              }}
-              className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-bold text-indigo-700 bg-indigo-50 flex items-center gap-2"
-            >
-              <ShieldCheck className="w-4 h-4" /> Administration
-            </button>
-          </div>
+          {user && (user.role === 'admin' || user.role === 'owner') && (
+            <div className="pt-2 border-t border-slate-100">
+              <button
+                onClick={() => {
+                  navigate('/admin');
+                  setMobileMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2.5 rounded-xl text-sm font-bold text-indigo-700 bg-indigo-50 flex items-center gap-2"
+              >
+                <ShieldCheck className="w-4 h-4" /> Administration
+              </button>
+            </div>
+          )}
         </div>
       )}
     </header>

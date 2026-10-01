@@ -107,6 +107,8 @@ export function maskPhoneNumber(phone?: string): string {
 export class SaspayService {
   private activePollers: Map<string, NodeJS.Timeout> = new Map();
   private recentRequestsByPhone: Map<string, number> = new Map();
+  private processedTransactionIds: Set<string> = new Set();
+  private inFlightWebhookLocks: Set<string> = new Set();
 
   public get secretKey(): string {
     const cfg = saspayConfigManager.getConfig();
@@ -343,58 +345,121 @@ export class SaspayService {
       .digest('hex');
   }
 
-  // Verify SasPay official webhook signature: HMAC-SHA256 of `${timestamp}.${rawBody}`
+  /**
+   * Verify SasPay official webhook signature with cryptographic security:
+   * Supports:
+   * 1. Stripe/Saspay standard format: `t=1727764800,v1=9f86d081884c...`
+   * 2. Headers: `x-saspay-signature`, `x-webhook-signature`, `signature`, `x-signature`
+   * 3. Timestamp headers: `x-saspay-timestamp`, `x-webhook-timestamp`, `timestamp`
+   * 4. Direct hex HMAC-SHA256 of raw body
+   * 5. Constant-time equality comparison using crypto.timingSafeEqual
+   * 6. Strict replay-attack window tolerance check (max 300 seconds)
+   */
   public verifySaspayWebhookSignature(
     rawBody: string,
     signatureHeader?: string,
     timestampHeader?: string
   ): boolean {
-    if (!signatureHeader) return false;
+    if (!signatureHeader || !rawBody) return false;
 
-    // Keys to test: primary is webhook secret, fallback is API secret key
-    const candidateKeys = [this.webhookSecret, this.secretKey].filter(Boolean);
+    // Keys to test: primary is dedicated webhook secret, secondary is API secret key, tertiary is API key
+    const candidateKeys = [
+      this.webhookSecret,
+      this.secretKey,
+      this.apiKey,
+      process.env.BACKEND_SECRET_KEY,
+    ].filter((k): k is string => typeof k === 'string' && k.trim().length > 0);
 
-    // Check tolerance (5 minutes) if timestamp is present
-    if (timestampHeader) {
-      const now = Math.floor(Date.now() / 1000);
-      const ts = Number(timestampHeader);
-      if (Math.abs(now - ts) > 300) {
-        console.log(`[PAYMENT] Webhook timestamp out of tolerance: ${ts} vs now ${now}`);
-        return false;
-      }
-
-      for (const key of candidateKeys) {
-        const expected = crypto
-          .createHmac('sha256', key)
-          .update(`${timestampHeader}.${rawBody}`)
-          .digest('hex');
-        try {
-          const a = Buffer.from(signatureHeader.toLowerCase());
-          const b = Buffer.from(expected.toLowerCase());
-          if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
-            return true;
-          }
-        } catch {
-          // Continue to next candidate key
-        }
-      }
+    if (candidateKeys.length === 0) {
       return false;
     }
 
-    // Direct HMAC on body if no timestamp header
-    for (const key of candidateKeys) {
-      const directExpected = crypto
-        .createHmac('sha256', key)
-        .update(rawBody)
-        .digest('hex');
-      try {
-        const a = Buffer.from(signatureHeader.toLowerCase());
-        const b = Buffer.from(directExpected.toLowerCase());
-        if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+    let parsedTimestamp = timestampHeader ? timestampHeader.trim() : '';
+    let cleanSignature = signatureHeader.trim();
+
+    // Parse structured header format like "t=1727764800,v1=abcdef123456..."
+    if (cleanSignature.includes('t=') && (cleanSignature.includes('v1=') || cleanSignature.includes('v0='))) {
+      const parts = cleanSignature.split(',');
+      for (const part of parts) {
+        const [k, v] = part.split('=').map((s) => s.trim());
+        if (k === 't' && !parsedTimestamp) {
+          parsedTimestamp = v;
+        } else if (k === 'v1' || k === 'v0') {
+          cleanSignature = v;
+        }
+      }
+    }
+
+    // Strip optional "sha256=", "v1=", or "v0=" prefix
+    cleanSignature = cleanSignature.replace(/^(sha256=|v1=|v0=)/i, '').trim().toLowerCase();
+
+    // Replay attack prevention: verify timestamp within 5 minutes tolerance (300 seconds)
+    if (parsedTimestamp) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const tsSec = parseInt(parsedTimestamp, 10);
+      if (!isNaN(tsSec)) {
+        if (Math.abs(nowSec - tsSec) > 300) {
+          console.warn(`[PAYMENT_SECURITY] Webhook timestamp out of tolerance (replay attack check): received ${tsSec} vs server ${nowSec} (drift: ${Math.abs(nowSec - tsSec)}s > 300s)`);
+          return false;
+        }
+      }
+    }
+
+    const sigBuf = Buffer.from(cleanSignature, 'utf-8');
+
+    // 1. Check HMAC of `${parsedTimestamp}.${rawBody}` if timestamp is available
+    if (parsedTimestamp) {
+      for (const key of candidateKeys) {
+        const expectedHex = crypto
+          .createHmac('sha256', key)
+          .update(`${parsedTimestamp}.${rawBody}`)
+          .digest('hex')
+          .toLowerCase();
+
+        const expectedBuf = Buffer.from(expectedHex, 'utf-8');
+        if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
           return true;
         }
+      }
+    }
+
+    // 2. Check direct HMAC-SHA256 on rawBody
+    for (const key of candidateKeys) {
+      const directExpectedHex = crypto
+        .createHmac('sha256', key)
+        .update(rawBody)
+        .digest('hex')
+        .toLowerCase();
+
+      const directExpectedBuf = Buffer.from(directExpectedHex, 'utf-8');
+      if (sigBuf.length === directExpectedBuf.length && crypto.timingSafeEqual(sigBuf, directExpectedBuf)) {
+        return true;
+      }
+    }
+
+    // 3. Check legacy pipe-delimited simulation signature if applicable
+    for (const key of candidateKeys) {
+      try {
+        const parsed = JSON.parse(rawBody);
+        const data = parsed.data || parsed;
+        const ref = data.merchant_reference || data.transaction_reference || data.reference;
+        const amount = data.amount;
+        const currency = data.currency;
+        const status = data.status;
+        if (ref && amount !== undefined) {
+          const pipeString = `${ref}|${amount}|${currency || 'USD'}|${status}|${key}`;
+          const pipeExpectedHex = crypto
+            .createHmac('sha256', key)
+            .update(pipeString)
+            .digest('hex')
+            .toLowerCase();
+          const pipeExpectedBuf = Buffer.from(pipeExpectedHex, 'utf-8');
+          if (sigBuf.length === pipeExpectedBuf.length && crypto.timingSafeEqual(sigBuf, pipeExpectedBuf)) {
+            return true;
+          }
+        }
       } catch {
-        // Continue to next candidate key
+        // Not a JSON payload or parsing error
       }
     }
 

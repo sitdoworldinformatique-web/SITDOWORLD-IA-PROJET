@@ -124,6 +124,13 @@ export function App() {
 
     if (!isLoggedIn && !isPublicAuthRoute) {
       setCurrentRoute('/auth');
+      return;
+    }
+
+    // Role-based protection: if attempting to access /admin without admin or owner role, redirect to /
+    const isOwnerOrAdmin = Boolean(user && (user.role === 'admin' || user.role === 'owner'));
+    if (currentRoute === '/admin' && !isOwnerOrAdmin) {
+      setCurrentRoute('/');
     }
   }, [user, currentRoute]);
 
@@ -139,6 +146,13 @@ export function App() {
 
     if (!isLoggedIn && !isPublicAuthRoute) {
       setCurrentRoute('/auth');
+      return;
+    }
+
+    // Strict Admin route guard: only users with real verified 'admin' or 'owner' role can navigate to /admin
+    const isOwnerOrAdmin = Boolean(user && (user.role === 'admin' || user.role === 'owner'));
+    if (normalized.startsWith('/admin') && !isOwnerOrAdmin) {
+      setCurrentRoute('/');
       return;
     }
 
@@ -438,7 +452,9 @@ export function App() {
           />
         )}
 
-        {currentRoute === '/admin' && user && <AdminView />}
+        {currentRoute === '/admin' && user && (user.role === 'admin' || user.role === 'owner') && (
+          <AdminView currentUser={user} navigate={navigate} />
+        )}
       </main>
 
       {/* Global Persistent Audio Player */}
