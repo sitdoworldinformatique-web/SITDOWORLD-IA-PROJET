@@ -45,8 +45,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <img
               src={user?.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80'}
-              alt={user?.name}
-              className="w-24 h-24 rounded-2xl object-cover border-2 border-orange-400 shadow-md"
+              alt={user?.name || 'Utilisateur'}
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"%3E%3Crect width="100" height="100" fill="%232563EB"/%3E%3Ctext x="50" y="55" font-family="Arial" font-size="36" fill="white" text-anchor="middle" dominant-baseline="middle"%3EIA%3C/text%3E%3C/svg%3E';
+              }}
+              className="w-24 h-24 rounded-2xl object-cover border-2 border-blue-400 shadow-md"
             />
             <div>
               <div className="flex items-center gap-2">
