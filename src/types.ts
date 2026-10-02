@@ -12,7 +12,32 @@ export type Genre =
   | 'Lo-fi'
   | 'Jazz';
 
-export type PlanId = 'starter' | 'creator' | 'pro' | 'studio' | 'master_vip';
+export type PlanId = 'starter' | 'creator' | 'pro' | 'studio' | 'master_vip' | string;
+
+export interface CoachingDomain {
+  id: string;
+  slug: string;
+  name: string;
+  tagline: string;
+  description: string;
+  price: number;
+  currency: string;
+  iconName: string;
+  topics: string[];
+  coachName: string;
+  coachTitle: string;
+  sampleQuestions: string[];
+  isPurchased?: boolean;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: string;
+  domainId?: string;
+  isStreaming?: boolean;
+}
 
 export interface Plan {
   id: PlanId;
@@ -261,6 +286,7 @@ export interface User {
   role: 'user' | 'creator' | 'admin' | 'owner';
   status?: 'active' | 'suspended';
   is_vip?: boolean;
+  purchased_domains?: string[];
   created_at: string;
 }
 

@@ -1055,6 +1055,41 @@ class Database {
     return true;
   }
 
+  // ---------------- DOMAIN COACHING ACCESS (INTELLIGENCE AFRICAINE) ----------------
+  public purchaseDomain(userId: string, domainId: string): boolean {
+    const user = this.users.get(userId);
+    if (!user) return false;
+    if (!user.purchased_domains) {
+      user.purchased_domains = [];
+    }
+    if (!user.purchased_domains.includes(domainId)) {
+      user.purchased_domains.push(domainId);
+      this.users.set(userId, user);
+      this.logEvent('payment_success', userId, {
+        domainId,
+        action: 'DOMAIN_PURCHASED',
+        unlocked: true,
+      });
+    }
+    return true;
+  }
+
+  public hasPurchasedDomain(userId: string, domainId: string): boolean {
+    const user = this.users.get(userId);
+    if (!user) return false;
+    if (user.role === 'admin' || user.role === 'owner') return true;
+    return Boolean(user.purchased_domains && user.purchased_domains.includes(domainId));
+  }
+
+  public getUserPurchasedDomains(userId: string): string[] {
+    const user = this.users.get(userId);
+    if (!user) return [];
+    if (user.role === 'admin' || user.role === 'owner') {
+      return ['agriculture', 'elevage', 'construction', 'informatique', 'commerce'];
+    }
+    return user.purchased_domains || [];
+  }
+
   // ---------------- SAAS SETTINGS MANAGEMENT ----------------
   public getSaaSSettings(): SaaSSettings {
     return { ...this.saasSettings };

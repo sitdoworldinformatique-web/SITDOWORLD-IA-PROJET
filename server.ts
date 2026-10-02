@@ -24,6 +24,8 @@ import { validateEnvironment, loadConfig } from './server/config';
 import { generatedAudioStore } from './server/services/ai/MusicProvider';
 import { sunorMusicProvider } from './server/services/ai/SunorMusicProvider';
 import { supabaseService } from './server/services/supabase';
+import { askAfricanCoach, DOMAIN_PERSONAS } from './server/coachAi';
+import { COACHING_DOMAINS } from './src/data/coachingDomains';
 
 export async function createExpressApp() {
   const app = express();
@@ -800,6 +802,86 @@ export async function createExpressApp() {
 
   app.post('/api/auth/reset-password', (req, res) => {
     res.json({ success: true, message: 'Votre mot de passe a été mis à jour avec succès.' });
+  });
+
+  // ---------------- INTELLIGENCE AFRICAINE: DOMAINS & AI COACHING ----------------
+  app.get('/api/domains', (req, res) => {
+    const userId = (req.query.userId as string) || (req.headers['x-user-id'] as string) || 'user-default-1';
+    const purchased = db.getUserPurchasedDomains(userId);
+    const enriched = COACHING_DOMAINS.map((d) => ({
+      ...d,
+      isPurchased: purchased.includes(d.id),
+    }));
+    res.json({ domains: enriched });
+  });
+
+  app.post('/api/domains/:domainId/purchase', (req, res) => {
+    const { domainId } = req.params;
+    const userId = (req.body?.userId as string) || (req.headers['x-user-id'] as string) || 'user-default-1';
+
+    const domain = COACHING_DOMAINS.find((d) => d.id === domainId);
+    if (!domain) {
+      return res.status(404).json({ error: 'Domaine de coaching introuvable.' });
+    }
+
+    if (!userId || !db.users.has(userId)) {
+      return res.status(401).json({ error: 'Veuillez vous connecter pour débloquer ce domaine.' });
+    }
+
+    // Process domain purchase
+    db.purchaseDomain(userId, domainId);
+    const user = db.users.get(userId);
+
+    res.json({
+      success: true,
+      message: `Félicitations ! Le domaine ${domain.name} est maintenant débloqué. Vous avez accès à votre Coach IA dédié.`,
+      domainId,
+      user,
+    });
+  });
+
+  app.post('/api/ai/chat', async (req, res) => {
+    try {
+      const { message, domainId, history } = req.body;
+      const userId = (req.body?.userId as string) || (req.headers['x-user-id'] as string) || 'user-default-1';
+
+      if (!message || typeof message !== 'string' || !message.trim()) {
+        return res.status(400).json({ error: 'Le message est obligatoire.' });
+      }
+
+      // Check if domain is locked
+      if (domainId) {
+        const isPurchased = db.hasPurchasedDomain(userId, domainId);
+        if (!isPurchased) {
+          const domain = COACHING_DOMAINS.find((d) => d.id === domainId);
+          return res.status(403).json({
+            error: `Le domaine ${domain?.name || domainId} nécessite un accès premium. Veuillez débloquer le domaine pour accéder au coach expert.`,
+            code: 'DOMAIN_LOCKED',
+            domainId,
+          });
+        }
+      }
+
+      const result = await askAfricanCoach({
+        message: message.trim(),
+        domainId,
+        userId,
+        history,
+      });
+
+      res.json({
+        success: true,
+        reply: result.reply,
+        domainInfo: result.domainInfo,
+      });
+    } catch (err: any) {
+      console.error('[API /api/ai/chat] Error:', err);
+      res.status(500).json({
+        success: false,
+        error: 'Erreur lors de la génération de la réponse du coach IA.',
+        reply: "Une brève interruption technique s'est produite. Posez à nouveau votre question, votre coach IA reste à votre écoute.",
+      });
+    }
   });
 
   // ---------------- PLANS & PRICING ----------------

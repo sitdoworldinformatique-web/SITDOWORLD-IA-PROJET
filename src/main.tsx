@@ -5,7 +5,7 @@ import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import './index.css';
 
 // Automatically inject session authentication header to all internal API calls
-const originalFetch = window.fetch;
+const originalFetch = window.fetch.bind(window);
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   try {
     let url = '';

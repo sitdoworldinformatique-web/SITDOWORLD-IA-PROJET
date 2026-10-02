@@ -19,7 +19,8 @@ import { ProfileView } from './views/ProfileView';
 import { AdminView } from './views/AdminView';
 import { StudioLockedGate } from './components/StudioLockedGate';
 
-import { User, UserSongBalance, Song, Playlist, Plan, PromptTemplate, VoiceProfile } from './types';
+import { User, UserSongBalance, Song, Playlist, Plan, PromptTemplate, VoiceProfile, CoachingDomain } from './types';
+import { COACHING_DOMAINS } from './data/coachingDomains';
 import {
   FALLBACK_SONGS,
   FALLBACK_PLANS,
@@ -73,8 +74,10 @@ export function App() {
   const [currentSong, setCurrentSong] = useState<Song | null>(FALLBACK_SONGS[0]);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
-  // Cross-view contextual state
+  // Cross-view contextual state & Coaching Domains
   const [selectedPlanForPayment, setSelectedPlanForPayment] = useState<Plan | null>(null);
+  const [selectedDomainForPayment, setSelectedDomainForPayment] = useState<CoachingDomain | null>(COACHING_DOMAINS[0]);
+  const [unlockedDomains, setUnlockedDomains] = useState<string[]>([]);
   const [prefillCreateGenre, setPrefillCreateGenre] = useState<string | undefined>();
   const [prefillCreatePrompt, setPrefillCreatePrompt] = useState<string | undefined>();
   const [studioTargetSong, setStudioTargetSong] = useState<Song | null>(null);
@@ -85,6 +88,11 @@ export function App() {
 
   const handleShareSong = (song: Song) => {
     setShareModalSong(song);
+  };
+
+  const handleSelectDomainForPayment = (domain: CoachingDomain) => {
+    setSelectedDomainForPayment(domain);
+    navigate('/payment');
   };
 
   const handleToggleFavorite = async (songId: string) => {
@@ -122,6 +130,9 @@ export function App() {
       if (data && data.user) {
         setUser(data.user);
         if (data.balance) setBalance(data.balance);
+        if (data.user.purchased_domains) {
+          setUnlockedDomains(data.user.purchased_domains);
+        }
         if (typeof window !== 'undefined' && storedUserId !== 'guest') {
           localStorage.setItem('sitdoworld_logged_in', 'true');
           localStorage.setItem('sitdoworld_user_id', data.user.id);
@@ -129,6 +140,15 @@ export function App() {
       } else {
         setUser(null);
         setBalance(null);
+      }
+
+      // Fetch unlocked domains list
+      const domainsData = await safeJsonFetch<{ domains?: Array<CoachingDomain & { isPurchased?: boolean }> }>(
+        storedUserId && storedUserId !== 'guest' ? `/api/domains?userId=${encodeURIComponent(storedUserId)}` : '/api/domains'
+      );
+      if (domainsData?.domains) {
+        const unlocked = domainsData.domains.filter((d) => d.isPurchased).map((d) => d.id);
+        setUnlockedDomains(unlocked);
       }
     } catch (e) {
       console.error(e);
@@ -343,20 +363,28 @@ export function App() {
           />
         )}
 
-        {/* Home View (Always visible on /) */}
-        {currentRoute === '/' && (
+        {/* Home View (Always visible on / and /domaines, and acts as universal fallback against blank screens) */}
+        {(currentRoute === '/' ||
+          currentRoute === '/domaines' ||
+          (!isAuthRoute &&
+            currentRoute !== '/payment' &&
+            currentRoute !== '/tarifs' &&
+            currentRoute !== '/pricing' &&
+            currentRoute !== '/profile' &&
+            currentRoute !== '/dashboard' &&
+            currentRoute !== '/admin' &&
+            currentRoute !== '/discover' &&
+            currentRoute !== '/create' &&
+            currentRoute !== '/library' &&
+            currentRoute !== '/playlists' &&
+            currentRoute !== '/studio' &&
+            currentRoute !== '/voices' &&
+            currentRoute !== '/templates')) && (
           <HomeView
             navigate={navigate}
-            songs={songs}
-            playlists={playlists}
-            currentSong={currentSong}
-            isPlaying={isPlaying}
-            onPlaySong={handlePlaySong}
-            onSelectGenre={handleSelectGenre}
-            onOpenStudio={hasActivePack ? handleOpenStudio : undefined}
-            hasActivePack={hasActivePack}
-            onToggleFavorite={handleToggleFavorite}
-            onShare={handleShareSong}
+            user={user}
+            onSelectDomainForPurchase={handleSelectDomainForPayment}
+            unlockedDomains={unlockedDomains}
           />
         )}
 
@@ -485,10 +513,20 @@ export function App() {
 
         {currentRoute === '/payment' && (
           <PaymentView
-            plan={selectedPlanForPayment || plans[1] || null}
-            onBack={() => navigate('/tarifs')}
-            onSuccess={(newBal) => {
-              setBalance(newBal);
+            domain={selectedDomainForPayment}
+            plan={selectedPlanForPayment}
+            onBack={() => navigate('/')}
+            onSuccess={(newBal, unlockedDomainId) => {
+              if (newBal) setBalance(newBal);
+              if (unlockedDomainId) {
+                setUnlockedDomains((prev) => Array.from(new Set([...prev, unlockedDomainId])));
+                if (user) {
+                  setUser({
+                    ...user,
+                    purchased_domains: Array.from(new Set([...(user.purchased_domains || []), unlockedDomainId])),
+                  });
+                }
+              }
               refreshUserData();
             }}
             navigate={navigate}

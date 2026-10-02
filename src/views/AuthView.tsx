@@ -98,63 +98,63 @@ export const AuthView: React.FC<AuthViewProps> = ({
   return (
     <div className="min-h-[calc(100vh-6rem)] flex items-center justify-center py-12 px-4 sm:px-6">
       <div className="max-w-5xl w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-        {/* Left Column: Studio Presentation for Artists & Creators */}
+        {/* Left Column: Platform Presentation for African Project Leaders */}
         <div className="lg:col-span-6 space-y-6">
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-orange-100 text-[#FF7A00] text-xs font-black shadow-xs">
-            <Sparkles className="w-4 h-4 text-[#FF7A00]" />
-            <span>STUDIO DE CRÉATION MUSICALE IA</span>
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-50 border border-blue-200/80 text-blue-700 text-xs font-black shadow-xs">
+            <Sparkles className="w-4 h-4 text-blue-600" />
+            <span>COACHING IA & TRANSFORMATION DES PROJETS</span>
           </div>
 
           <div className="space-y-3">
             <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black text-[#0F172A] tracking-tight leading-tight">
-              Bienvenue sur <span className="text-[#FF7A00]">SITDOWORLD</span>{' '}
-              <span className="text-[#2563EB]">AI MUSIC</span>.
+              Bienvenue sur <span className="text-blue-600">INTELLIGENCE</span>{' '}
+              <span className="text-[#0F172A]">AFRICAINE</span>.
             </h1>
-            <p className="text-sm sm:text-base text-[#64748B] leading-relaxed">
-              Connectez-vous ou créez votre compte d'artiste pour composer vos morceaux avec l'intelligence artificielle, explorer les genres musicaux et gérer votre discothèque personnelle.
+            <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
+              Votre coach IA pour apprendre, développer et transformer vos projets en Afrique. Accédez à des expertises concrètes et adaptées aux réalités économiques locales.
             </p>
           </div>
 
-          {/* Value points purely related to creative music production */}
+          {/* Key value propositions for the 5 coaching domains */}
           <div className="space-y-3 pt-2">
             <div className="flex items-start gap-3.5 p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs">
-              <div className="w-10 h-10 rounded-xl bg-orange-100 text-[#FF7A00] flex items-center justify-center shrink-0 mt-0.5">
-                <Wand2 className="w-5 h-5" />
+              <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                <CheckCircle2 className="w-5 h-5" />
               </div>
               <div>
                 <h4 className="font-extrabold text-sm text-[#0F172A]">
-                  Composition Musicale par Intelligence Artificielle
+                  5 Domaines Stratégiques Panafricains
                 </h4>
-                <p className="text-xs text-[#64748B] mt-0.5 leading-relaxed">
-                  Transformez vos paroles, vos thèmes et vos idées mélodiques en véritables productions sonores masterisées.
+                <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                  Agriculture tropicale, Aviculture & Élevage rentable, Devis & BTP, Informatique & Mobile Money, et Commerce/Importation.
                 </p>
               </div>
             </div>
 
             <div className="flex items-start gap-3.5 p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs">
-              <div className="w-10 h-10 rounded-xl bg-blue-100 text-[#2563EB] flex items-center justify-center shrink-0 mt-0.5">
-                <Disc3 className="w-5 h-5" />
+              <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 mt-0.5">
+                <CheckCircle2 className="w-5 h-5" />
               </div>
               <div>
                 <h4 className="font-extrabold text-sm text-[#0F172A]">
-                  Grande Diversité de Styles & Voix
+                  Conseils Concrets et Chiffrés
                 </h4>
-                <p className="text-xs text-[#64748B] mt-0.5 leading-relaxed">
-                  Afrobeat, Amapiano, Gospel, R&B, Pop, Hip-Hop, Dance et Cinématique avec choix d’interprétations vocales.
+                <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                  Fini la théorie abstraite : obtenez des calendriers culturaux, des formulations d'aliments locaux et des métrés de chantier réalistes.
                 </p>
               </div>
             </div>
 
             <div className="flex items-start gap-3.5 p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs">
-              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                <Headphones className="w-5 h-5" />
+              <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 mt-0.5">
+                <CheckCircle2 className="w-5 h-5" />
               </div>
               <div>
                 <h4 className="font-extrabold text-sm text-[#0F172A]">
-                  Écoute Haute Fidélité & Exportation
+                  Interaction Vocale & Écrite Intuitive
                 </h4>
-                <p className="text-xs text-[#64748B] mt-0.5 leading-relaxed">
-                  Écoutez vos morceaux sur lecteur intégré, constituez vos playlists et téléchargez vos pistes finales.
+                <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                  Discutez en direct au clavier ou par microphone avec synthèse vocale instantanée inspirée de l'ergonomie de ChatGPT.
                 </p>
               </div>
             </div>
