@@ -140,6 +140,23 @@ export interface SongTransaction {
   created_at: string;
 }
 
+export type ActivityType = 'creation' | 'remix' | 'purchase' | 'domain_purchase' | 'like';
+
+export interface UserActivity {
+  id: string;
+  type: ActivityType;
+  title: string;
+  description: string;
+  timestamp: string;
+  song?: Song;
+  amount?: number;
+  currency?: string;
+  reference?: string;
+  domainId?: string;
+  domainName?: string;
+  metadata?: Record<string, any>;
+}
+
 export type GenerationStatus =
   | 'queued'
   | 'processing'

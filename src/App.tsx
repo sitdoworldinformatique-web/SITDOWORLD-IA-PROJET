@@ -453,54 +453,27 @@ export function App() {
 
         {/* Multitrack Studio */}
         {currentRoute === '/studio' && (
-          hasActivePack ? (
-            <StudioView
-              song={studioTargetSong || currentSong}
-              onRemix={handleRemix}
-              onExtend={handleExtend}
-            />
-          ) : (
-            <StudioLockedGate
-              plans={plans}
-              onSelectPlan={handleSelectPlan}
-              navigate={navigate}
-              title="Accès au Studio Multitrack Réservé"
-            />
-          )
+          <StudioView
+            song={studioTargetSong || currentSong || songs[0]}
+            onRemix={handleRemix}
+            onExtend={handleExtend}
+          />
         )}
 
         {/* Voices View */}
         {currentRoute === '/voices' && (
-          hasActivePack ? (
-            <VoicesView
-              voices={voices}
-              onVoiceCreated={(v) => setVoices([v, ...voices])}
-            />
-          ) : (
-            <StudioLockedGate
-              plans={plans}
-              onSelectPlan={handleSelectPlan}
-              navigate={navigate}
-              title="Accès au Studio Vocal Réservé"
-            />
-          )
+          <VoicesView
+            voices={voices}
+            onVoiceCreated={(v) => setVoices([v, ...voices])}
+          />
         )}
 
         {/* Templates View */}
         {currentRoute === '/templates' && (
-          hasActivePack ? (
-            <TemplatesView
-              templates={templates}
-              onUseTemplate={handleUseTemplate}
-            />
-          ) : (
-            <StudioLockedGate
-              plans={plans}
-              onSelectPlan={handleSelectPlan}
-              navigate={navigate}
-              title="Accès aux Templates Studio Réservé"
-            />
-          )
+          <TemplatesView
+            templates={templates}
+            onUseTemplate={handleUseTemplate}
+          />
         )}
 
         {/* The SINGLE Official Pricing Page (/tarifs and /pricing) */}
@@ -534,23 +507,28 @@ export function App() {
         )}
 
         {(currentRoute === '/profile' || currentRoute === '/dashboard') && (
-          user ? (
-            <ProfileView
-              user={user}
-              balance={balance}
-              songs={songs}
-              currentSong={currentSong}
-              isPlaying={isPlaying}
-              onPlaySong={handlePlaySong}
-              onOpenStudio={handleOpenStudio}
-              navigate={navigate}
-            />
-          ) : (
-            <AuthView
-              initialMode="login"
-              onAuthSuccess={handleAuthSuccess}
-            />
-          )
+          <ProfileView
+            user={
+              user || {
+                id: 'user-default-1',
+                name: 'Utilisateur Invité',
+                username: 'invite',
+                email: 'visiteur@intelligence-africaine.com',
+                avatar_url:
+                  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
+                role: 'user',
+                created_at: new Date().toISOString(),
+                purchased_domains: unlockedDomains,
+              }
+            }
+            balance={balance}
+            songs={songs}
+            currentSong={currentSong}
+            isPlaying={isPlaying}
+            onPlaySong={handlePlaySong}
+            onOpenStudio={handleOpenStudio}
+            navigate={navigate}
+          />
         )}
 
         {currentRoute === '/admin' && user && (user.role === 'admin' || user.role === 'owner') && (
